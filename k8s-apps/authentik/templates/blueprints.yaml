@@ -12,6 +12,29 @@ data:
     metadata:
       name: demo-bootstrap
     entries:
+      {{- with .Values.branding }}
+      {{- if or .title .background .logo .favicon }}
+      # Default brand: look of all flows (login, consent, logout, ...)
+      - model: authentik_brands.brand
+        identifiers:
+          domain: authentik-default
+        attrs:
+          default: true
+          {{- with .title }}
+          branding_title: {{ . | quote }}
+          {{- end }}
+          {{- with .background }}
+          branding_default_flow_background: {{ . | quote }}
+          {{- end }}
+          {{- with .logo }}
+          branding_logo: {{ . | quote }}
+          {{- end }}
+          {{- with .favicon }}
+          branding_favicon: {{ . | quote }}
+          {{- end }}
+      {{- end }}
+      {{- end }}
+
       # Members get role:admin in Argo CD (see argocd-rbac-cm in k8s-bootstrap)
       - model: authentik_core.group
         id: argocd-admins

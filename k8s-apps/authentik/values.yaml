@@ -5,6 +5,14 @@
 #   secret-key, postgres-password, postgres-admin-password,
 #   akadmin-password, demo-password, argocd-client-secret
 
+# Look of the login pages (default brand), applied via the bootstrap blueprint.
+# URLs may contain %(theme)s for light/dark variants. Empty = authentik default.
+branding:
+  title: ""
+  background: https://raw.githubusercontent.com/bartekmo/demo-mk8s/refs/heads/main/k8s-apps/authentik/accelerate25-blog-hero.jpg
+  logo: ""
+  favicon: ""
+
 authentik:
   global:
     env:
