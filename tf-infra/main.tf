@@ -82,6 +82,7 @@ resource "google_compute_instance" "mk8s" {
 
   network_interface {
     subnetwork = google_compute_subnetwork.mk8s.name
+    network_ip = cidrhost(var.node_cidr, count.index + 100)
 
     alias_ip_range {
       subnetwork_range_name = "mlb"
