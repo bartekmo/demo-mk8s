@@ -1,0 +1,40 @@
+# Registration is automatic: templates/register-job.yaml (Argo CD PreSync
+# hook) creates an instance runner via the GitLab API and stores its token in
+# Secret "gitlab-runner-token", which the runner below reads.
+
+# in-cluster GitLab (no TLS / LB hairpin needed for API, clone, artifacts)
+gitlabInternalUrl: http://gitlab.gitlab.svc.cluster.local
+
+gitlab-runner:
+  gitlabUrl: http://gitlab.gitlab.svc.cluster.local/
+  # token written by the register job; must not be unregistered on shutdown,
+  # or GitLab deletes the runner and the stored token stops working
+  unregisterRunners: false
+  concurrent: 4
+
+  rbac:
+    create: true
+  serviceAccount:
+    create: true
+
+  runners:
+    secret: gitlab-runner-token
+    # Job pods run in this namespace. The build container gets unconfined
+    # seccomp/AppArmor so rootless BuildKit can build images without
+    # privileged pods (it still runs as an unprivileged user).
+    config: |
+      [[runners]]
+        clone_url = "http://gitlab.gitlab.svc.cluster.local"
+        [runners.kubernetes]
+          namespace = "{{ default .Release.Namespace .Values.runners.jobNamespace }}"
+          image = "alpine:3"
+          privileged = false
+          poll_timeout = 600
+          cpu_request = "250m"
+          memory_request = "512Mi"
+          memory_limit = "4Gi"
+          [runners.kubernetes.build_container_security_context]
+            [runners.kubernetes.build_container_security_context.seccomp_profile]
+              type = "Unconfined"
+            [runners.kubernetes.build_container_security_context.app_armor_profile]
+              type = "Unconfined"

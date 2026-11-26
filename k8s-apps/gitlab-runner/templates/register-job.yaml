@@ -1,0 +1,104 @@
+# Creates the instance runner in GitLab and stores its token (glrt-...) in
+# Secret gitlab-runner-token. Runs before every sync (PreSync); a no-op while
+# the stored token still verifies. Uses the narrowly scoped (create_runner)
+# root token that GitLab seeds from the node-bootstrap generated value.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: runner-register
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: runner-register
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [gitlab-runner-token]
+    verbs: [get, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: runner-register
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "-1"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: runner-register
+subjects:
+  - kind: ServiceAccount
+    name: runner-register
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: runner-register
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 3600 # GitLab's first start can take a while
+  template:
+    spec:
+      serviceAccountName: runner-register
+      restartPolicy: OnFailure
+      containers:
+        - name: register
+          image: curlimages/curl:8.11.1
+          env:
+            - name: GITLAB
+              value: {{ .Values.gitlabInternalUrl | quote }}
+            - name: BOOTSTRAP_TOKEN
+              valueFrom:
+                secretKeyRef: { name: gitlab-runner-bootstrap, key: token }
+          command: [/bin/sh, -c]
+          args:
+            - |
+              set -eu
+              SA=/var/run/secrets/kubernetes.io/serviceaccount
+              NS=$(cat $SA/namespace)
+              API=https://kubernetes.default.svc/api/v1/namespaces/$NS/secrets
+              k8s() { curl -sS --cacert $SA/ca.crt -H "Authorization: Bearer $(cat $SA/token)" "$@"; }
+
+              until curl -sf -o /dev/null "$GITLAB/-/readiness"; do
+                echo "waiting for GitLab..."; sleep 15
+              done
+
+              current=$(k8s "$API/gitlab-runner-token" \
+                | sed -n 's/.*"runner-token": *"\([^"]*\)".*/\1/p' | base64 -d 2>/dev/null || true)
+              if [ -n "$current" ] && curl -sf -o /dev/null -X POST "$GITLAB/api/v4/runners/verify" \
+                   --data-urlencode "token=$current"; then
+                echo "stored runner token is valid - nothing to do"; exit 0
+              fi
+
+              # the bootstrap token is seeded by GitLab's post-start script
+              until resp=$(curl -sf -X POST "$GITLAB/api/v4/user/runners" \
+                  -H "PRIVATE-TOKEN: $BOOTSTRAP_TOKEN" \
+                  --data runner_type=instance_type --data run_untagged=true \
+                  --data-urlencode "description=k8s runner (bootstrap)"); do
+                echo "waiting for the bootstrap token to be accepted..."; sleep 15
+              done
+              token=$(echo "$resp" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+              [ -n "$token" ] || { echo "no token in response: $resp"; exit 1; }
+
+              b64=$(printf %s "$token" | base64 | tr -d '\n')
+              k8s -o /dev/null -X DELETE "$API/gitlab-runner-token" || true
+              k8s -f -o /dev/null -X POST -H 'Content-Type: application/json' "$API" -d \
+                "{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"gitlab-runner-token\"},\"data\":{\"runner-token\":\"$b64\",\"runner-registration-token\":\"\"}}"
+              echo "registered instance runner, token stored in secret gitlab-runner-token"

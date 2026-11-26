@@ -1,0 +1,102 @@
+{{- $dns := required "global.dnsRoot is required" .Values.global.dnsRoot -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gitlab-config
+data:
+  # Evaluated as Ruby by "gitlab-ctl reconfigure" on every container start;
+  # ENV[...] values come from the gitlab-bootstrap Secret.
+  gitlab.rb: |
+    external_url 'https://gitlab.{{ $dns }}'
+    registry_external_url 'https://registry.{{ $dns }}'
+
+    # TLS is terminated by Traefik (Let's Encrypt via cert-manager)
+    letsencrypt['enable'] = false
+    nginx['listen_port'] = 80
+    nginx['listen_https'] = false
+    nginx['proxy_set_headers'] = { 'X-Forwarded-Proto' => 'https', 'X-Forwarded-Ssl' => 'on' }
+    nginx['real_ip_trusted_addresses'] = ['10.0.0.0/8']
+    nginx['real_ip_header'] = 'X-Forwarded-For'
+    registry_nginx['listen_port'] = 5050
+    registry_nginx['listen_https'] = false
+    registry_nginx['proxy_set_headers'] = { 'X-Forwarded-Proto' => 'https', 'X-Forwarded-Ssl' => 'on' }
+    gitlab_rails['trusted_proxies'] = ['10.0.0.0/8']
+
+    # git over SSH: external LB :22 -> MetalLB IP -> this container's sshd
+    gitlab_rails['gitlab_shell_ssh_port'] = 22
+
+    # Container / small-footprint settings
+    package['modify_kernel_parameters'] = false
+    prometheus_monitoring['enable'] = false
+    puma['worker_processes'] = {{ .Values.puma.workers }}
+    sidekiq['concurrency'] = {{ .Values.sidekiq.concurrency }}
+    # kubelet probes come from the pod network
+    gitlab_rails['monitoring_whitelist'] = ['127.0.0.0/8', '10.0.0.0/8']
+
+    # Local break-glass admin "root" (password set on first start only)
+    gitlab_rails['initial_root_password'] = ENV['GITLAB_ROOT_PASSWORD']
+    gitlab_rails['store_initial_root_password'] = false
+
+    # SSO via authentik. Users are created on first login; the login page
+    # redirects straight to authentik. root signs in at
+    # https://gitlab.{{ $dns }}/users/sign_in?auto_sign_in=false
+    gitlab_rails['omniauth_enabled'] = true
+    gitlab_rails['omniauth_allow_single_sign_on'] = ['openid_connect']
+    gitlab_rails['omniauth_block_auto_created_users'] = false
+    gitlab_rails['omniauth_auto_link_user'] = ['openid_connect']
+    gitlab_rails['omniauth_auto_sign_in_with_provider'] = 'openid_connect'
+    gitlab_rails['omniauth_providers'] = [
+      {
+        name: 'openid_connect',
+        label: 'authentik',
+        args: {
+          name: 'openid_connect',
+          scope: ['openid', 'profile', 'email'],
+          response_type: 'code',
+          issuer: 'https://auth.{{ $dns }}/application/o/gitlab/',
+          discovery: true,
+          pkce: true,
+          uid_field: 'preferred_username',
+          client_options: {
+            identifier: 'gitlab',
+            secret: ENV['GITLAB_OIDC_CLIENT_SECRET'],
+            redirect_uri: 'https://gitlab.{{ $dns }}/users/auth/openid_connect/callback'
+          }
+        }
+      }
+    ]
+
+  # Runs in the background next to GitLab; applies DB-backed settings that
+  # gitlab.rb can't express. Idempotent, re-applied on every start.
+  post-start.sh: |
+    #!/bin/bash
+    until curl -sf -o /dev/null http://localhost/-/readiness; do sleep 15; done
+    echo "post-start: applying application settings"
+    gitlab-rails runner '
+      s = ApplicationSetting.current
+      s.update!(signup_enabled: false)
+      puts "post-start: signup_enabled=#{s.signup_enabled}"
+
+      # Seed the narrowly scoped root token (create_runner only) that the
+      # gitlab-runner app uses to register the instance runner. The value is
+      # generated in-cluster by the node bootstrap (Secret gitlab-bootstrap).
+      value = ENV["GITLAB_RUNNER_BOOTSTRAP_TOKEN"].to_s
+      unless value.empty?
+        root = User.find_by_username("root")
+        name = "runner-bootstrap"
+        cur = root.personal_access_tokens.find_by(name: name)
+        if cur && cur.active? && cur.expires_at > 30.days.from_now
+          puts "post-start: #{name} token present"
+        else
+          root.personal_access_tokens.where(name: name).delete_all
+          attrs = { name: name, scopes: ["create_runner"], expires_at: 300.days.from_now }
+          if PersonalAccessToken.column_names.include?("organization_id")
+            attrs[:organization] = Organizations::Organization.first
+          end
+          t = root.personal_access_tokens.new(attrs)
+          t.set_token(value)
+          t.save!
+          puts "post-start: #{name} token seeded"
+        end
+      end
+    '

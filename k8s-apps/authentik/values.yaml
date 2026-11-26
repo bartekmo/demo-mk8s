@@ -3,7 +3,7 @@
 # All secrets come from the "authentik-bootstrap" Secret, generated in-cluster
 # by the node bootstrap script (never stored in Git or Terraform state):
 #   secret-key, postgres-password, postgres-admin-password,
-#   akadmin-password, demo-password, argocd-client-secret
+#   akadmin-password, demo-password, <client>-client-secret per oidcClients
 
 # Look of the login pages (default brand), applied via the bootstrap blueprint.
 # URLs may contain %(theme)s for light/dark variants. Empty = authentik default.
@@ -12,6 +12,22 @@ branding:
   background: https://raw.githubusercontent.com/bartekmo/demo-mk8s/refs/heads/main/k8s-apps/authentik/accelerate25-blog-hero.jpg
   logo: ""
   favicon: ""
+
+# OIDC clients registered in authentik by the blueprint. client_id = name,
+# redirect = https://<host>.<dnsRoot><redirectPath>. Each secretEnv must be
+# wired to an authentik-bootstrap key in authentik.global.env below (the node
+# bootstrap generates "<name>-client-secret" and copies it to the app).
+oidcClients:
+  - name: argocd
+    title: Argo CD
+    host: argocd
+    redirectPath: /auth/callback
+    secretEnv: ARGOCD_CLIENT_SECRET
+  - name: gitlab
+    title: GitLab
+    host: gitlab
+    redirectPath: /users/auth/openid_connect/callback
+    secretEnv: GITLAB_CLIENT_SECRET
 
 authentik:
   global:
@@ -33,6 +49,9 @@ authentik:
       - name: ARGOCD_CLIENT_SECRET
         valueFrom:
           secretKeyRef: { name: authentik-bootstrap, key: argocd-client-secret }
+      - name: GITLAB_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef: { name: authentik-bootstrap, key: gitlab-client-secret }
 
   authentik:
     # real values come from the env above; the chart's secret must not set them

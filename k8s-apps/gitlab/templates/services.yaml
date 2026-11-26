@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitlab
+spec:
+  selector:
+    app.kubernetes.io/name: gitlab
+  ports:
+    - { name: http, port: 80, targetPort: http }
+    - { name: registry, port: 5050, targetPort: registry }
+---
+# git over SSH: fixed MetalLB IP, fronted by port 22 of the external LB
+apiVersion: v1
+kind: Service
+metadata:
+  name: gitlab-ssh
+  annotations:
+    metallb.io/loadBalancerIPs: {{ required "global.lbIPs.gitlabSsh is required" .Values.global.lbIPs.gitlabSsh | quote }}
+    metallb.universe.tf/loadBalancerIPs: {{ .Values.global.lbIPs.gitlabSsh | quote }}
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: gitlab
+  ports:
+    - { name: ssh, port: 22, targetPort: ssh }

@@ -1,0 +1,26 @@
+# global.dnsRoot and global.lbIPs.gitlabSsh are injected by the Argo CD
+# ApplicationSet (k8s-bootstrap); lbIPs must match the Terraform LB endpoint.
+#
+# Secrets come from the "gitlab-bootstrap" Secret generated in-cluster by the
+# node bootstrap: root-password, oidc-client-secret (shared with authentik),
+# runner-bootstrap-token (shared with gitlab-runner, see templates/configmap.yaml).
+
+image: gitlab/gitlab-ce:19.6.2-ce.0
+
+# One PD volume holds /etc/gitlab (config, keys) and /var/opt/gitlab
+# (repositories, Postgres, Redis, uploads, artifacts, registry images)
+storage:
+  size: 50Gi
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 4Gi
+  limits:
+    memory: 8Gi
+
+# Puma/Sidekiq sizing for a small demo instance
+puma:
+  workers: 2
+sidekiq:
+  concurrency: 10

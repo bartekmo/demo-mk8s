@@ -29,6 +29,9 @@ spec:
           valuesObject:
             global:
               dnsRoot: ${dns_root}
+              # fixed MetalLB IPs that the external LB (Terraform) points at
+              lbIPs:
+                gitlabSsh: ${gitlab_ssh_ip}
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{.path.basename}}'

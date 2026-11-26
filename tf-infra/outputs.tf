@@ -23,5 +23,11 @@ output "get_passwords" {
   value       = <<-EOT
     microk8s kubectl -n authentik get secret authentik-bootstrap -o jsonpath='{.data.demo-password}' | base64 -d     # user: demo
     microk8s kubectl -n authentik get secret authentik-bootstrap -o jsonpath='{.data.akadmin-password}' | base64 -d  # user: akadmin
+    microk8s kubectl -n gitlab get secret gitlab-bootstrap -o jsonpath='{.data.root-password}' | base64 -d          # GitLab user: root
   EOT
+}
+
+output "gitlab_url" {
+  description = "GitLab (DNS: gitlab.<dns_root> and registry.<dns_root> -> lb_ip; SSH on lb_ip:22)"
+  value       = "https://gitlab.${var.dns_root}"
 }

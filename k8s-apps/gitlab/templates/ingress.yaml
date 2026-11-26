@@ -1,0 +1,29 @@
+{{- $dns := required "global.dnsRoot is required" .Values.global.dnsRoot -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gitlab
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: gitlab.{{ $dns }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: gitlab, port: { name: http } }
+    - host: registry.{{ $dns }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: gitlab, port: { name: registry } }
+  tls:
+    - hosts:
+        - gitlab.{{ $dns }}
+        - registry.{{ $dns }}
+      secretName: gitlab-tls

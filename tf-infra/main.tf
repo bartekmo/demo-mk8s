@@ -66,7 +66,16 @@ locals {
   primary_ip     = cidrhost(var.node_cidr, 100)
   join_token_ttl = 315360000 # 10 years: same token works for later scale-out
 
-  lb_ports = { http = 80, https = 443 }
+  # Fixed MetalLB addresses in node-0's /24, each fronted by the external LB
+  traefik_ip    = cidrhost(local.node_mlb_ranges[0], local.traefik_ip_q4)
+  gitlab_ssh_ip = cidrhost(local.node_mlb_ranges[0], 11)
+
+  # LB frontend name -> backend address:port ("backend" is used in names)
+  lb_services = {
+    http  = { port = 80, ip = local.traefik_ip, backend = "traefik" }
+    https = { port = 443, ip = local.traefik_ip, backend = "traefik" }
+    ssh   = { port = 22, ip = local.gitlab_ssh_ip, backend = "gitlab" } # git over SSH
+  }
 }
 
 # Pre-shared microk8s join token: node-0 registers it (add-node --token),
@@ -183,39 +192,43 @@ resource "google_compute_instance" "mk8s" {
     }
   }
 
-  # IAM-based SSH (roles/compute.osAdminLogin); gcloud compute ssh then stops
-  # writing ssh-keys into metadata, which caused in-place drift
   metadata = {
+    # IAM-based SSH (roles/compute.osAdminLogin); gcloud compute ssh then
+    # stops writing ssh-keys into metadata, which caused in-place drift
     enable-oslogin = "TRUE"
-  }
 
-  metadata_startup_script = templatefile("${path.module}/node.tftpl", {
-    admin_username = var.admin_username,
-    is_primary     = count.index == 0
-    primary_ip     = local.primary_ip
-    join_token     = random_password.join_token.result
-    join_token_ttl = local.join_token_ttl
-    mlb_range      = local.node_mlb_ranges[count.index]
-    traefik_ip     = cidrhost(local.node_mlb_ranges[count.index], local.traefik_ip_q4)
-    argocd_version = var.argocd_version
-    cluster_issuer = templatefile("${path.module}/../k8s-bootstrap/cluster-issuer.yaml.tftpl", {
-      acme_email = var.acme_email
+    # Bootstrap script, re-run on every boot (idempotent). Kept in metadata
+    # rather than metadata_startup_script: changes update in place and take
+    # effect at the next boot, instead of forcing a new VM (= new cluster).
+    startup-script = templatefile("${path.module}/node.tftpl", {
+      admin_username = var.admin_username,
+      is_primary     = count.index == 0
+      primary_ip     = local.primary_ip
+      join_token     = random_password.join_token.result
+      join_token_ttl = local.join_token_ttl
+      mlb_range      = local.node_mlb_ranges[count.index]
+      traefik_ip     = cidrhost(local.node_mlb_ranges[count.index], local.traefik_ip_q4)
+      argocd_version = var.argocd_version
+      cluster_issuer = templatefile("${path.module}/../k8s-bootstrap/cluster-issuer.yaml.tftpl", {
+        acme_email = var.acme_email
+      })
+      argocd_ingress = templatefile("${path.module}/../k8s-bootstrap/argocd-ingress.yaml.tftpl", {
+        dns_root = var.dns_root
+      })
+      argocd_cm_patch = templatefile("${path.module}/../k8s-bootstrap/argocd-cm-patch.yaml.tftpl", {
+        dns_root = var.dns_root
+      })
+      argocd_rbac_cm_patch = file("${path.module}/../k8s-bootstrap/argocd-rbac-cm-patch.yaml")
+      argocd_appset = templatefile("${path.module}/../k8s-bootstrap/argocd-appset.yaml.tftpl", {
+        repo_url      = var.gitops_repo_url
+        repo_path     = var.gitops_repo_path
+        repo_revision = var.gitops_repo_revision
+        dns_root      = var.dns_root
+        gitlab_ssh_ip = local.gitlab_ssh_ip
+      })
+      metadata_concealment = file("${path.module}/../k8s-bootstrap/metadata-concealment.yaml")
     })
-    argocd_ingress = templatefile("${path.module}/../k8s-bootstrap/argocd-ingress.yaml.tftpl", {
-      dns_root = var.dns_root
-    })
-    argocd_cm_patch = templatefile("${path.module}/../k8s-bootstrap/argocd-cm-patch.yaml.tftpl", {
-      dns_root = var.dns_root
-    })
-    argocd_rbac_cm_patch = file("${path.module}/../k8s-bootstrap/argocd-rbac-cm-patch.yaml")
-    argocd_appset = templatefile("${path.module}/../k8s-bootstrap/argocd-appset.yaml.tftpl", {
-      repo_url      = var.gitops_repo_url
-      repo_path     = var.gitops_repo_path
-      repo_revision = var.gitops_repo_revision
-      dns_root      = var.dns_root
-    })
-    metadata_concealment = file("${path.module}/../k8s-bootstrap/metadata-concealment.yaml")
-  })
+  }
 
   # Used by the PD CSI driver (controller/node run with hostNetwork). Pods are
   # blocked from the metadata server, so they can't borrow this identity.
@@ -236,7 +249,8 @@ resource "google_compute_instance" "mk8s" {
   }
 }
 
-# --- Global external proxy Network Load Balancer -> Traefik (mlb IP) ---
+# --- Global external proxy Network Load Balancer -> MetalLB IPs on node-0 ---
+# http/https -> Traefik, ssh -> GitLab's SSH Service (see local.lb_services)
 
 resource "google_compute_firewall" "lb" {
   name    = "${var.prefix}-lb-to-traefik"
@@ -244,12 +258,12 @@ resource "google_compute_firewall" "lb" {
 
   allow {
     protocol = "tcp"
-    ports    = [for p in values(local.lb_ports) : tostring(p)]
+    ports    = distinct([for s in values(local.lb_services) : tostring(s.port)])
   }
 
   # Google Front Ends: proxied traffic and health checks
   source_ranges      = ["35.191.0.0/16", "130.211.0.0/22"]
-  destination_ranges = [cidrhost(local.node_mlb_ranges[0], local.traefik_ip_q4)]
+  destination_ranges = distinct([for s in values(local.lb_services) : s.ip])
   target_tags        = ["${var.prefix}-node"]
 }
 
@@ -266,39 +280,39 @@ resource "google_compute_health_check" "traefik" {
 }
 
 resource "google_compute_network_endpoint_group" "traefik" {
-  for_each              = local.lb_ports
-  name                  = "${var.prefix}-traefik-${each.key}"
+  for_each              = local.lb_services
+  name                  = "${var.prefix}-${each.value.backend}-${each.key}"
   zone                  = local.zone
   network               = google_compute_network.mk8s.id
   subnetwork            = google_compute_subnetwork.mk8s.id
   network_endpoint_type = "GCE_VM_IP_PORT"
-  default_port          = each.value
+  default_port          = each.value.port
 }
 
-resource "google_compute_network_endpoint" "traefik_http" {
-  # Traefik's LoadBalancer IP lives in node-0's /24 only
-  count = 1
+# All LB backend addresses live in node-0's /24 only
+resource "google_compute_network_endpoint" "lb" {
+  for_each = local.lb_services
 
-  network_endpoint_group = google_compute_network_endpoint_group.traefik["http"].name
+  network_endpoint_group = google_compute_network_endpoint_group.traefik[each.key].name
   zone                   = local.zone
-  instance               = google_compute_instance.mk8s[count.index].name
-  ip_address             = cidrhost(local.node_mlb_ranges[count.index], local.traefik_ip_q4)
-  port                   = 80
+  instance               = google_compute_instance.mk8s[0].name
+  ip_address             = each.value.ip
+  port                   = each.value.port
 }
-resource "google_compute_network_endpoint" "traefik_https" {
-  # Traefik's LoadBalancer IP lives in node-0's /24 only
-  count = 1
 
-  network_endpoint_group = google_compute_network_endpoint_group.traefik["https"].name
-  zone                   = local.zone
-  instance               = google_compute_instance.mk8s[count.index].name
-  ip_address             = cidrhost(local.node_mlb_ranges[count.index], local.traefik_ip_q4)
-  port                   = 443
+moved {
+  from = google_compute_network_endpoint.traefik_http[0]
+  to   = google_compute_network_endpoint.lb["http"]
+}
+
+moved {
+  from = google_compute_network_endpoint.traefik_https[0]
+  to   = google_compute_network_endpoint.lb["https"]
 }
 
 resource "google_compute_backend_service" "traefik" {
-  for_each              = local.lb_ports
-  name                  = "${var.prefix}-traefik-${each.key}"
+  for_each              = local.lb_services
+  name                  = "${var.prefix}-${each.value.backend}-${each.key}"
   protocol              = "TCP"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   health_checks         = [google_compute_health_check.traefik.id]
@@ -311,16 +325,16 @@ resource "google_compute_backend_service" "traefik" {
 }
 
 resource "google_compute_target_tcp_proxy" "traefik" {
-  for_each        = local.lb_ports
-  name            = "${var.prefix}-traefik-${each.key}"
+  for_each        = local.lb_services
+  name            = "${var.prefix}-${each.value.backend}-${each.key}"
   backend_service = google_compute_backend_service.traefik[each.key].id
 }
 
 resource "google_compute_global_forwarding_rule" "traefik" {
-  for_each              = local.lb_ports
-  name                  = "${var.prefix}-traefik-${each.key}"
+  for_each              = local.lb_services
+  name                  = "${var.prefix}-${each.value.backend}-${each.key}"
   load_balancing_scheme = "EXTERNAL_MANAGED"
   ip_address            = google_compute_global_address.lb.id
-  port_range            = tostring(each.value)
+  port_range            = tostring(each.value.port)
   target                = google_compute_target_tcp_proxy.traefik[each.key].id
 }

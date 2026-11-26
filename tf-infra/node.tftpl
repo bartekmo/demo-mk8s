@@ -86,27 +86,40 @@ kubectl apply -n argocd --server-side --force-conflicts \
 kubectl wait --for condition=established crd/applications.argoproj.io --timeout=2m
 
 # --- In-cluster generated secrets (never in Git / Terraform state) ---
-# authentik: app + DB secrets, akadmin and "demo" passwords, Argo CD OIDC
-# client secret (shared with argocd/argocd-oidc). Created once, kept on reboot.
+# Generated once; on later boots only missing keys are added, so new apps /
+# OIDC clients get their secrets on an existing cluster too.
 gen() { openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c1-32; }
-kubectl create namespace authentik --dry-run=client -o yaml | kubectl apply -f -
-if ! kubectl -n authentik get secret authentik-bootstrap >/dev/null 2>&1; then
-  kubectl -n authentik create secret generic authentik-bootstrap \
-    --from-literal=secret-key="$(openssl rand -base64 60 | tr -d '\n')" \
-    --from-literal=postgres-password="$(gen)" \
-    --from-literal=postgres-admin-password="$(gen)" \
-    --from-literal=akadmin-password="$(gen)" \
-    --from-literal=demo-password="$(gen)" \
-    --from-literal=argocd-client-secret="$(gen)"
-fi
-if ! kubectl -n argocd get secret argocd-oidc >/dev/null 2>&1; then
-  oidc_secret=$(kubectl -n authentik get secret authentik-bootstrap \
-    -o jsonpath='{.data.argocd-client-secret}' | base64 -d)
-  kubectl -n argocd create secret generic argocd-oidc \
-    --from-literal=clientSecret="$oidc_secret"
-  # Argo CD only resolves $secret:key references from its own labelled secrets
-  kubectl -n argocd label secret argocd-oidc app.kubernetes.io/part-of=argocd
-fi
+# ensure_key <namespace> <secret> <key> <value>: create secret or add a missing key
+ensure_key() {
+  kubectl create namespace "$1" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  if ! kubectl -n "$1" get secret "$2" >/dev/null 2>&1; then
+    kubectl -n "$1" create secret generic "$2" --from-literal="$3=$4"
+  elif [ -z "$(kubectl -n "$1" get secret "$2" -o jsonpath="{.data.$3}")" ]; then
+    kubectl -n "$1" patch secret "$2" --type merge -p "{\"stringData\":{\"$3\":\"$4\"}}"
+  fi
+}
+get_key() { kubectl -n "$1" get secret "$2" -o jsonpath="{.data.$3}" | base64 -d; }
+
+# authentik: app/DB secrets, akadmin + "demo" passwords, OIDC client secrets
+ensure_key authentik authentik-bootstrap secret-key "$(openssl rand -base64 60 | tr -dc 'A-Za-z0-9')"
+for k in postgres-password postgres-admin-password akadmin-password demo-password \
+         argocd-client-secret gitlab-client-secret; do
+  ensure_key authentik authentik-bootstrap "$k" "$(gen)"
+done
+
+# Argo CD: OIDC client secret (copy). Argo CD only resolves $secret:key
+# references from its own labelled secrets.
+ensure_key argocd argocd-oidc clientSecret "$(get_key authentik authentik-bootstrap argocd-client-secret)"
+kubectl -n argocd label secret argocd-oidc app.kubernetes.io/part-of=argocd --overwrite
+
+# GitLab: root (break-glass admin) password + OIDC client secret (copy)
+ensure_key gitlab gitlab-bootstrap root-password "$(gen)"
+ensure_key gitlab gitlab-bootstrap oidc-client-secret "$(get_key authentik authentik-bootstrap gitlab-client-secret)"
+
+# GitLab Runner: value of the create_runner-scoped root token that GitLab
+# seeds on start; the runner app uses it to register the instance runner
+ensure_key gitlab gitlab-bootstrap runner-bootstrap-token "glpat-$(gen)"
+ensure_key gitlab-runner gitlab-runner-bootstrap token "$(get_key gitlab gitlab-bootstrap runner-bootstrap-token)"
 
 # Traefik terminates TLS, so argocd-server serves plain HTTP
 kubectl -n argocd patch cm argocd-cmd-params-cm --type merge \
