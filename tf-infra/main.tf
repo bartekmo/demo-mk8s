@@ -94,6 +94,18 @@ resource "google_compute_instance" "mk8s" {
     admin_username = var.admin_username,
     mlb_range      = local.node_mlb_ranges[count.index]
     traefik_ip     = cidrhost(local.node_mlb_ranges[count.index], local.traefik_ip_q4)
+    argocd_version = var.argocd_version
+    cluster_issuer = templatefile("${path.module}/../k8s-bootstrap/cluster-issuer.yaml.tftpl", {
+      acme_email = var.acme_email
+    })
+    argocd_ingress = templatefile("${path.module}/../k8s-bootstrap/argocd-ingress.yaml.tftpl", {
+      dns_root = var.dns_root
+    })
+    argocd_root_app = templatefile("${path.module}/../k8s-bootstrap/argocd-root-app.yaml.tftpl", {
+      repo_url      = var.gitops_repo_url
+      repo_path     = var.gitops_repo_path
+      repo_revision = var.gitops_repo_revision
+    })
   })
 
   # don't recreate the node when the image family moves on

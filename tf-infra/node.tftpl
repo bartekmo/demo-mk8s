@@ -4,6 +4,7 @@ apt upgrade -y
 apt install git -y
 
 snap install microk8s --classic --channel=1.35
+microk8s status --wait-ready
 
 mkdir -p /etc/skel/.kube
 chmod 0700 /etc/skel/.kube
@@ -49,8 +50,36 @@ else
   echo "ingress LoadBalancer service not found; Traefik IP not pinned" >&2
 fi
 
-wget https://raw.githubusercontent.com/argoproj/argo-cd/refs/tags/stable/manifests/install.yaml
-microk8s kubectl apply --server-side --force-conflicts -f install.yaml
+kubectl() { microk8s kubectl "$@"; }
 
-#git clone https://github.com/bartekmo/demo-mk8s.git
-#microk8s kubectl apply -f demo-mk8s/k8s-bootstrap/nginx/nginx.yaml
+# --- cert-manager + Let's Encrypt issuer ---
+microk8s enable cert-manager
+kubectl -n cert-manager rollout status deploy/cert-manager-webhook --timeout=5m
+# the webhook can still refuse requests for a few seconds after rollout
+for i in $(seq 30); do
+  kubectl apply -f - <<'YAML' && break
+${cluster_issuer}
+YAML
+  sleep 10
+done
+
+# --- Argo CD ---
+kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -n argocd --server-side --force-conflicts \
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/${argocd_version}/manifests/install.yaml
+kubectl wait --for condition=established crd/applications.argoproj.io --timeout=2m
+
+# Traefik terminates TLS, so argocd-server serves plain HTTP
+kubectl -n argocd patch cm argocd-cmd-params-cm --type merge \
+  -p '{"data":{"server.insecure":"true"}}'
+kubectl -n argocd rollout restart deploy/argocd-server
+kubectl -n argocd rollout status deploy/argocd-server --timeout=5m
+
+kubectl apply -f - <<'YAML'
+${argocd_ingress}
+YAML
+
+# Root app: Argo CD deploys everything under the GitOps repo path
+kubectl apply -f - <<'YAML'
+${argocd_root_app}
+YAML

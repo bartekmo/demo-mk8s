@@ -7,3 +7,8 @@ output "lb_ip" {
   description = "Public IP of the external proxy Network Load Balancer"
   value       = google_compute_global_address.lb.address
 }
+
+output "argocd_url" {
+  description = "Argo CD UI (create DNS A record argocd.<dns_root> -> lb_ip)"
+  value       = "https://argocd.${var.dns_root}"
+}
