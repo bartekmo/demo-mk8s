@@ -1,0 +1,49 @@
+#!/bin/bash
+apt update
+apt upgrade -y
+
+snap install microk8s --classic --channel=1.35
+
+mkdir -p /etc/skel/.kube
+chmod 0700 /etc/skel/.kube
+
+# Admin (OS Login) user: not in /etc/passwd, so usermod won't work, but
+# initgroups() still honours /etc/group membership for NSS-provided users.
+admin_user='${admin_username}'
+if ! grep -qE "^microk8s:.*[:,]$${admin_user}(,|$)" /etc/group; then
+  sed -i -E "/^microk8s:/{s/$/,$${admin_user}/; s/:,/:/}" /etc/group
+fi
+
+# metadata-key users: guest agent adds them to these groups on creation
+if [ ! -e /etc/default/instance_configs.cfg ]; then
+  distro_groups=$(sed -n 's/^groups *= *//p' /etc/default/instance_configs.cfg.distro | head -n1)
+  distro_groups=$${distro_groups:-adm,dip,docker,lxd,plugdev,video}
+  cat > /etc/default/instance_configs.cfg <<EOF
+[Accounts]
+groups = $${distro_groups},microk8s
+EOF
+fi
+
+systemctl restart google-guest-agent 2>/dev/null || true
+
+microk8s enable metallb:${mlb_range}
+microk8s enable ingress
+
+# Pin the ingress (Traefik) LoadBalancer Service to a fixed mlb address
+# instead of MetalLB's first free one. The LB's NEG endpoint points here.
+traefik_ip='${traefik_ip}'
+svc=""
+for i in $(seq 60); do
+  svc=$(microk8s kubectl get svc -A --field-selector spec.type=LoadBalancer \
+    -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}' \
+    | grep -i -m1 -e ingress -e traefik)
+  [ -n "$svc" ] && break
+  sleep 5
+done
+if [ -n "$svc" ]; then
+  microk8s kubectl -n "$${svc%%/*}" annotate svc "$${svc#*/}" --overwrite \
+    metallb.io/loadBalancerIPs="$traefik_ip" \
+    metallb.universe.tf/loadBalancerIPs="$traefik_ip"
+else
+  echo "ingress LoadBalancer service not found; Traefik IP not pinned" >&2
+fi
