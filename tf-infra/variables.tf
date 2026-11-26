@@ -59,3 +59,14 @@ variable "argocd_version" {
   default     = "stable"
   description = "Argo CD git ref (tag/branch) for the upstream install manifest"
 }
+
+variable "boot_disk_gb" {
+  type        = number
+  default     = 50
+  description = "Node boot disk size (holds container images and microk8s data)"
+}
+
+variable "boot_disk_type" {
+  type    = string
+  default = "pd-balanced"
+}

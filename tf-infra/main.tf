@@ -166,6 +166,10 @@ resource "google_compute_instance" "mk8s" {
     initialize_params {
       image = "projects/ubuntu-os-cloud/global/images/family/ubuntu-minimal-2604-lts-amd64"
       //image = "projects/ubuntu-os-cloud/global/images/family/ubuntu-2604-lts-amd64"
+      # container images + microk8s data live here; the image default (10 GB)
+      # fills up and triggers kubelet DiskPressure evictions
+      size = var.boot_disk_gb
+      type = var.boot_disk_type
     }
   }
 
@@ -177,6 +181,12 @@ resource "google_compute_instance" "mk8s" {
       subnetwork_range_name = "mlb"
       ip_cidr_range         = local.node_mlb_ranges[count.index]
     }
+  }
+
+  # IAM-based SSH (roles/compute.osAdminLogin); gcloud compute ssh then stops
+  # writing ssh-keys into metadata, which caused in-place drift
+  metadata = {
+    enable-oslogin = "TRUE"
   }
 
   metadata_startup_script = templatefile("${path.module}/node.tftpl", {
@@ -215,9 +225,14 @@ resource "google_compute_instance" "mk8s" {
   }
   allow_stopping_for_update = true
 
-  # don't recreate the node when the image family moves on
   lifecycle {
-    ignore_changes = [boot_disk[0].initialize_params[0].image]
+    ignore_changes = [
+      # don't recreate the node when the image family moves on
+      boot_disk[0].initialize_params[0].image,
+      # PVC disks are attached by the PD CSI driver; without this, any in-place
+      # update of the instance makes Terraform detach them from running pods
+      attached_disk,
+    ]
   }
 }
 
