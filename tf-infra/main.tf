@@ -62,7 +62,38 @@ locals {
   //traefik_ip    = cidrhost(local.node_mlb_ranges[0], 10)
   traefik_ip_q4 = 10
 
+  # node-0 is the control plane; other nodes join it as workers
+  primary_ip     = cidrhost(var.node_cidr, 100)
+  join_token_ttl = 315360000 # 10 years: same token works for later scale-out
+
   lb_ports = { http = 80, https = 443 }
+}
+
+# Pre-shared microk8s join token: node-0 registers it (add-node --token),
+# workers use it (join --worker). 32 alphanumeric chars as microk8s requires.
+resource "random_password" "join_token" {
+  length  = 32
+  special = false
+}
+
+# All node-to-node traffic (join 25000, API 16443, kubelet 10250,
+# dqlite 19001, Calico VXLAN udp/4789, ...)
+resource "google_compute_firewall" "node_internal" {
+  name    = "${var.prefix}-node-internal"
+  network = google_compute_network.mk8s.name
+
+  allow {
+    protocol = "tcp"
+  }
+  allow {
+    protocol = "udp"
+  }
+  allow {
+    protocol = "icmp"
+  }
+
+  source_tags = ["${var.prefix}-node"]
+  target_tags = ["${var.prefix}-node"]
 }
 
 resource "google_compute_instance" "mk8s" {
@@ -92,6 +123,10 @@ resource "google_compute_instance" "mk8s" {
 
   metadata_startup_script = templatefile("${path.module}/node.tftpl", {
     admin_username = var.admin_username,
+    is_primary     = count.index == 0
+    primary_ip     = local.primary_ip
+    join_token     = random_password.join_token.result
+    join_token_ttl = local.join_token_ttl
     mlb_range      = local.node_mlb_ranges[count.index]
     traefik_ip     = cidrhost(local.node_mlb_ranges[count.index], local.traefik_ip_q4)
     argocd_version = var.argocd_version
@@ -127,7 +162,7 @@ resource "google_compute_firewall" "lb" {
 
   # Google Front Ends: proxied traffic and health checks
   source_ranges      = ["35.191.0.0/16", "130.211.0.0/22"]
-  destination_ranges = [for i in range(var.node_count) : cidrhost(local.node_mlb_ranges[i], local.traefik_ip_q4)]
+  destination_ranges = [cidrhost(local.node_mlb_ranges[0], local.traefik_ip_q4)]
   target_tags        = ["${var.prefix}-node"]
 }
 
@@ -154,7 +189,8 @@ resource "google_compute_network_endpoint_group" "traefik" {
 }
 
 resource "google_compute_network_endpoint" "traefik_http" {
-  count = var.node_count
+  # Traefik's LoadBalancer IP lives in node-0's /24 only
+  count = 1
 
   network_endpoint_group = google_compute_network_endpoint_group.traefik["http"].name
   zone                   = local.zone
@@ -163,7 +199,8 @@ resource "google_compute_network_endpoint" "traefik_http" {
   port                   = 80
 }
 resource "google_compute_network_endpoint" "traefik_https" {
-  count = var.node_count
+  # Traefik's LoadBalancer IP lives in node-0's /24 only
+  count = 1
 
   network_endpoint_group = google_compute_network_endpoint_group.traefik["https"].name
   zone                   = local.zone
