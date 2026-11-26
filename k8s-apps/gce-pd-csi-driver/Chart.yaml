@@ -1,0 +1,6 @@
+apiVersion: v2
+name: gce-pd-csi-driver
+description: Google Compute Engine Persistent Disk CSI driver (upstream v1.29.1, patched for microk8s) + default StorageClass
+type: application
+version: 0.1.0
+appVersion: "v1.29.1"

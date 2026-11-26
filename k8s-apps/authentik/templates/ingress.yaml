@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: authentik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: auth.{{ required "global.dnsRoot is required" .Values.global.dnsRoot }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-server
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - auth.{{ .Values.global.dnsRoot }}
+      secretName: authentik-tls

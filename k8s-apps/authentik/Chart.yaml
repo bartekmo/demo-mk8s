@@ -1,0 +1,9 @@
+apiVersion: v2
+name: authentik
+description: authentik IdP (SSO for Argo CD, GitLab, code-server) with bootstrap blueprint
+type: application
+version: 0.1.0
+dependencies:
+  - name: authentik
+    version: 2026.8.7
+    repository: https://charts.goauthentik.io

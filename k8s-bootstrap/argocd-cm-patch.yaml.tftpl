@@ -1,0 +1,11 @@
+# Merged into argocd-cm: SSO via authentik (OIDC).
+# $argocd-oidc:clientSecret = key "clientSecret" of Secret argocd/argocd-oidc,
+# generated in-cluster by the node bootstrap.
+data:
+  url: https://argocd.${dns_root}
+  oidc.config: |
+    name: authentik
+    issuer: https://auth.${dns_root}/application/o/argocd/
+    clientID: argocd
+    clientSecret: $argocd-oidc:clientSecret
+    requestedScopes: ["openid", "profile", "email"]

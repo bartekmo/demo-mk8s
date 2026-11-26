@@ -96,6 +96,64 @@ resource "google_compute_firewall" "node_internal" {
   target_tags = ["${var.prefix}-node"]
 }
 
+# --- Node identity: only what the PD CSI driver needs ---
+# Project-wide grant, so run this in a dedicated project.
+
+data "google_client_config" "current" {}
+
+resource "google_service_account" "node" {
+  account_id   = "${var.prefix}-node"
+  display_name = "mk8s node (PD CSI driver)"
+}
+
+resource "google_project_iam_custom_role" "csi_disk" {
+  role_id     = "${replace(var.prefix, "-", "_")}_csi_disk"
+  title       = "${var.prefix} PD CSI driver"
+  description = "Minimal permissions for the GCE PD CSI driver on ${var.prefix} nodes"
+  permissions = [
+    "compute.disks.create",
+    "compute.disks.createSnapshot",
+    "compute.disks.delete",
+    "compute.disks.get",
+    "compute.disks.list",
+    "compute.disks.resize",
+    "compute.disks.setLabels",
+    "compute.disks.update",
+    "compute.disks.use",
+    "compute.disks.useReadOnly",
+    "compute.instances.attachDisk",
+    "compute.instances.detachDisk",
+    "compute.instances.get",
+    "compute.instances.list",
+    "compute.snapshots.create",
+    "compute.snapshots.delete",
+    "compute.snapshots.get",
+    "compute.snapshots.list",
+    "compute.snapshots.setLabels",
+    "compute.snapshots.useReadOnly",
+    "compute.zoneOperations.get",
+    "compute.zoneOperations.list",
+    "compute.zones.get",
+    "compute.zones.list",
+    "compute.regionOperations.get",
+    "compute.regions.get",
+    "compute.regions.list",
+  ]
+}
+
+resource "google_project_iam_member" "node_csi_disk" {
+  project = data.google_client_config.current.project
+  role    = google_project_iam_custom_role.csi_disk.name
+  member  = "serviceAccount:${google_service_account.node.email}"
+}
+
+# attaching a disk to an instance that runs as this SA requires actAs on it
+resource "google_service_account_iam_member" "node_act_as_self" {
+  service_account_id = google_service_account.node.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${google_service_account.node.email}"
+}
+
 resource "google_compute_instance" "mk8s" {
   count        = var.node_count
   name         = "${var.prefix}-node-${count.index}"
@@ -136,12 +194,26 @@ resource "google_compute_instance" "mk8s" {
     argocd_ingress = templatefile("${path.module}/../k8s-bootstrap/argocd-ingress.yaml.tftpl", {
       dns_root = var.dns_root
     })
-    argocd_root_app = templatefile("${path.module}/../k8s-bootstrap/argocd-root-app.yaml.tftpl", {
+    argocd_cm_patch = templatefile("${path.module}/../k8s-bootstrap/argocd-cm-patch.yaml.tftpl", {
+      dns_root = var.dns_root
+    })
+    argocd_rbac_cm_patch = file("${path.module}/../k8s-bootstrap/argocd-rbac-cm-patch.yaml")
+    argocd_appset = templatefile("${path.module}/../k8s-bootstrap/argocd-appset.yaml.tftpl", {
       repo_url      = var.gitops_repo_url
       repo_path     = var.gitops_repo_path
       repo_revision = var.gitops_repo_revision
+      dns_root      = var.dns_root
     })
+    metadata_concealment = file("${path.module}/../k8s-bootstrap/metadata-concealment.yaml")
   })
+
+  # Used by the PD CSI driver (controller/node run with hostNetwork). Pods are
+  # blocked from the metadata server, so they can't borrow this identity.
+  service_account {
+    email  = google_service_account.node.email
+    scopes = ["cloud-platform"] # effective access is limited by IAM below
+  }
+  allow_stopping_for_update = true
 
   # don't recreate the node when the image family moves on
   lifecycle {

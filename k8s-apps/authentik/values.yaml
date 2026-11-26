@@ -1,0 +1,56 @@
+# global.dnsRoot is injected by the Argo CD ApplicationSet (k8s-bootstrap).
+#
+# All secrets come from the "authentik-bootstrap" Secret, generated in-cluster
+# by the node bootstrap script (never stored in Git or Terraform state):
+#   secret-key, postgres-password, postgres-admin-password,
+#   akadmin-password, demo-password, argocd-client-secret
+
+authentik:
+  global:
+    env:
+      - name: AUTHENTIK_SECRET_KEY
+        valueFrom:
+          secretKeyRef: { name: authentik-bootstrap, key: secret-key }
+      - name: AUTHENTIK_POSTGRESQL__PASSWORD
+        valueFrom:
+          secretKeyRef: { name: authentik-bootstrap, key: postgres-password }
+      # initial password of the built-in "akadmin" superuser (first start only)
+      - name: AUTHENTIK_BOOTSTRAP_PASSWORD
+        valueFrom:
+          secretKeyRef: { name: authentik-bootstrap, key: akadmin-password }
+      # consumed by the blueprint (!Env) in templates/blueprints.yaml
+      - name: DEMO_PASSWORD
+        valueFrom:
+          secretKeyRef: { name: authentik-bootstrap, key: demo-password }
+      - name: ARGOCD_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef: { name: authentik-bootstrap, key: argocd-client-secret }
+
+  authentik:
+    # real values come from the env above; the chart's secret must not set them
+    secret_key: ""
+    error_reporting:
+      enabled: false
+    postgresql:
+      password: ""
+
+  blueprints:
+    configMaps:
+      - authentik-bootstrap-blueprints
+
+  # Ingress is defined in templates/ingress.yaml (needs global.dnsRoot)
+  server:
+    ingress:
+      enabled: false
+
+  postgresql:
+    enabled: true
+    auth:
+      existingSecret: authentik-bootstrap
+      secretKeys:
+        adminPasswordKey: postgres-admin-password
+        userPasswordKey: postgres-password
+    primary:
+      persistence:
+        enabled: true
+        size: 10Gi # uses the default StorageClass (pd-balanced)

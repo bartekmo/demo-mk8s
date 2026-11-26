@@ -1,0 +1,26 @@
+# Block pods from the GCE metadata server, so they can't obtain the node
+# service account's token (which carries the PD CSI disk permissions).
+# - DNS (53) to 169.254.169.254 stays open: it is also the VPC resolver.
+# - hostNetwork pods (PD CSI controller/node, Calico) are not subject to
+#   pod network policies and keep metadata access.
+# Deny in an AdminNetworkPolicy is final; anything not matched falls through
+# to regular NetworkPolicies unchanged.
+apiVersion: policy.networking.k8s.io/v1alpha1
+kind: AdminNetworkPolicy
+metadata:
+  name: deny-pod-metadata-server
+spec:
+  priority: 10
+  subject:
+    namespaces: {}
+  egress:
+    - name: deny-gce-metadata
+      action: Deny
+      to:
+        - networks:
+            - 169.254.169.254/32
+      ports:
+        - portRange: { protocol: TCP, start: 1, end: 52 }
+        - portRange: { protocol: TCP, start: 54, end: 65535 }
+        - portRange: { protocol: UDP, start: 1, end: 52 }
+        - portRange: { protocol: UDP, start: 54, end: 65535 }

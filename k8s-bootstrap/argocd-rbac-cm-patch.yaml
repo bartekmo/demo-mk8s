@@ -1,0 +1,6 @@
+# Merged into argocd-rbac-cm: members of the authentik group "argocd-admins"
+# (the demo user, see k8s-apps/authentik blueprint) are Argo CD admins.
+data:
+  policy.csv: |
+    g, argocd-admins, role:admin
+  scopes: "[groups]"

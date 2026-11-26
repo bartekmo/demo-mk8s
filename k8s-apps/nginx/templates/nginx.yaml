@@ -2,11 +2,6 @@
 # The Ingress below uses spec.defaultBackend only (no rules). Traefik turns that
 # into a PathPrefix(`/`) router with the lowest possible priority, so any
 # request not matched by another Ingress/IngressRoute lands on nginx.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: nginx
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

@@ -1,0 +1,47 @@
+# One Argo CD Application per directory under ${repo_path}/ in the GitOps repo.
+# Every app directory is a Helm chart; it receives global.dnsRoot so it can
+# build its hostnames (e.g. auth.<dnsRoot>). App name = namespace = dir name.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: apps
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: ${repo_url}
+        revision: ${repo_revision}
+        directories:
+          - path: ${repo_path}/*
+  template:
+    metadata:
+      name: '{{.path.basename}}'
+    spec:
+      project: default
+      source:
+        repoURL: ${repo_url}
+        targetRevision: ${repo_revision}
+        path: '{{.path.path}}'
+        helm:
+          releaseName: '{{.path.basename}}'
+          valuesObject:
+            global:
+              dnsRoot: ${dns_root}
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{.path.basename}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+        # apps may wait on others (e.g. PVCs on the CSI driver) - keep retrying
+        retry:
+          limit: 30
+          backoff:
+            duration: 30s
+            factor: 2
+            maxDuration: 5m

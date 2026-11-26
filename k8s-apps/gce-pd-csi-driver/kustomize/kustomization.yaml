@@ -1,0 +1,93 @@
+# Source for templates/driver.yaml - regenerate with ../generate.sh
+#
+# Upstream "noauth" overlay: no service-account key, the driver uses the VM's
+# service account via the metadata server (controller and node pods run with
+# hostNetwork, so they bypass the pod metadata block in k8s-bootstrap).
+# Patched for microk8s, whose kubelet root is
+# /var/snap/microk8s/common/var/lib/kubelet instead of /var/lib/kubelet.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - https://github.com/kubernetes-sigs/gcp-compute-persistent-disk-csi-driver//deploy/kubernetes/overlays/noauth?ref=v1.29.1
+
+patches:
+  # Linux-only cluster: drop the Windows node plugin
+  - patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: csi-gce-pd-node-win
+        namespace: gce-pd-csi-driver
+  - patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: csi-gce-pd-node-sa-win
+        namespace: gce-pd-csi-driver
+  - patch: |
+      $patch: delete
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: csi-gce-pd-node-win
+  - patch: |
+      $patch: delete
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: csi-gce-pd-node-deploy-win
+
+  # microk8s kubelet paths. Container mountPaths must equal the host paths,
+  # because kubelet hands the driver absolute host paths to mount into.
+  - target:
+      kind: DaemonSet
+      name: csi-gce-pd-node
+    patch: |
+      - op: test
+        path: /spec/template/spec/containers/0/args/2
+        value: --kubelet-registration-path=/var/lib/kubelet/plugins/pd.csi.storage.gke.io/csi.sock
+      - op: replace
+        path: /spec/template/spec/containers/0/args/2
+        value: --kubelet-registration-path=/var/snap/microk8s/common/var/lib/kubelet/plugins/pd.csi.storage.gke.io/csi.sock
+      - op: test
+        path: /spec/template/spec/containers/1/volumeMounts/0/name
+        value: kubelet-plugin-dir
+      - op: replace
+        path: /spec/template/spec/containers/1/volumeMounts/0/mountPath
+        value: /var/snap/microk8s/common/var/lib/kubelet/plugins/kubernetes.io/csi
+      - op: test
+        path: /spec/template/spec/containers/1/volumeMounts/1/name
+        value: kubelet-pods
+      - op: replace
+        path: /spec/template/spec/containers/1/volumeMounts/1/mountPath
+        value: /var/snap/microk8s/common/var/lib/kubelet/pods
+      - op: test
+        path: /spec/template/spec/volumes/0/name
+        value: registration-dir
+      - op: replace
+        path: /spec/template/spec/volumes/0/hostPath/path
+        value: /var/snap/microk8s/common/var/lib/kubelet/plugins_registry/
+      - op: test
+        path: /spec/template/spec/volumes/1/name
+        value: kubelet-pods
+      - op: replace
+        path: /spec/template/spec/volumes/1/hostPath/path
+        value: /var/snap/microk8s/common/var/lib/kubelet/pods
+      - op: test
+        path: /spec/template/spec/volumes/2/name
+        value: kubelet-plugin-dir
+      - op: replace
+        path: /spec/template/spec/volumes/2/hostPath/path
+        value: /var/snap/microk8s/common/var/lib/kubelet/plugins/kubernetes.io/csi
+      - op: test
+        path: /spec/template/spec/volumes/3/name
+        value: plugin-dir
+      - op: replace
+        path: /spec/template/spec/volumes/3/hostPath/path
+        value: /var/snap/microk8s/common/var/lib/kubelet/plugins/pd.csi.storage.gke.io/
+      # upstream keeps the node plugin off control-plane-labelled nodes;
+      # here node-0 is both control plane and worker
+      - op: remove
+        path: /spec/template/spec/affinity
