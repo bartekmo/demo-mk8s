@@ -70,3 +70,33 @@ variable "boot_disk_type" {
   type    = string
   default = "pd-balanced"
 }
+
+variable "lw_account" {
+  type        = string
+  description = "FortiCNAPP account name"
+  nullable    = true
+  default     = null
+}
+
+variable "lw_api_key" {
+  type        = string
+  description = "FortiCNAPP API key"
+  nullable    = true
+  default     = null
+  sensitive   = true
+}
+
+variable "lw_api_secret" {
+  type        = string
+  description = "FortiCNAPP API secret"
+  nullable    = true
+  default     = null
+  sensitive   = true
+}
+
+variable "lw_subaccount" {
+  type        = string
+  description = "FortiCNAPP subaccount name"
+  nullable    = true
+  default     = null
+}

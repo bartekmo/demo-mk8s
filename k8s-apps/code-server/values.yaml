@@ -38,3 +38,8 @@ extensions:
 
 # extra environment for the shell
 env: []
+
+# every key of this Secret becomes an environment variable (optional). Created by
+# the node bootstrap from the lw_* Terraform variables: FortiCNAPP LW_ACCOUNT,
+# LW_API_KEY, LW_API_SECRET, LW_SUBACCOUNT (only those that are set).
+extraEnvSecret: code-server-forticnapp

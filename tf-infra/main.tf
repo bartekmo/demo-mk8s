@@ -52,6 +52,17 @@ resource "google_compute_firewall" "mk8s" {
 locals {
   zone = "${var.region}-a"
 
+  # FortiCNAPP (Lacework) credentials for the IDE shell: only the lw_* variables
+  # that are set, as LW_* environment variables (Secret, see node.tftpl)
+  lw_env = {
+    for k, v in {
+      LW_ACCOUNT    = var.lw_account
+      LW_API_KEY    = var.lw_api_key
+      LW_API_SECRET = var.lw_api_secret
+      LW_SUBACCOUNT = var.lw_subaccount
+    } : k => v if v != null
+  }
+
   # one /24 from the mlb secondary range per node, by index
   node_mlb_ranges = [
     for i in range(var.node_count) :
@@ -234,6 +245,13 @@ resource "google_compute_instance" "mk8s" {
         overrides_repo_url = "http://gitlab.gitlab.svc.cluster.local/demo-apps/codeshell.git"
       })
       metadata_concealment = file("${path.module}/../k8s-bootstrap/metadata-concealment.yaml")
+      # JSON is valid YAML; base64 data avoids any quoting issues
+      code_server_lw_secret = jsonencode({
+        apiVersion = "v1"
+        kind       = "Secret"
+        metadata   = { name = "code-server-forticnapp", namespace = "code-server" }
+        data       = { for k, v in local.lw_env : k => base64encode(v) }
+      })
     })
   }
 

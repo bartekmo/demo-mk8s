@@ -109,6 +109,11 @@ spec:
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          {{- with .Values.extraEnvSecret }}
+          # optional: absent / empty Secret just adds nothing
+          envFrom:
+            - secretRef: { name: {{ . }}, optional: true }
+          {{- end }}
           ports:
             - { name: http, containerPort: 8080 }
           readinessProbe:

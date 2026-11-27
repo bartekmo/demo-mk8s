@@ -126,6 +126,15 @@ ensure_key gitlab-runner gitlab-runner-bootstrap token "$(get_key gitlab gitlab-
 ensure_key gitlab gitlab-bootstrap demo-token "glpat-$(gen)"
 ensure_key code-server code-server-gitlab token "$(get_key gitlab gitlab-bootstrap demo-token)"
 
+# FortiCNAPP credentials for the IDE shell (LW_* env, only the lw_* Terraform
+# variables that are set). Client-side apply also drops keys of variables that
+# were unset since. A running IDE pod only sees env changes after a restart.
+if kubectl apply -f - <<'YAML' | grep -q configured; then
+${code_server_lw_secret}
+YAML
+  kubectl -n code-server delete pod -l app.kubernetes.io/name=code-server --ignore-not-found
+fi
+
 # Traefik terminates TLS, so argocd-server serves plain HTTP
 kubectl -n argocd patch cm argocd-cmd-params-cm --type merge \
   -p '{"data":{"server.insecure":"true"}}'
