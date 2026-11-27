@@ -1,0 +1,21 @@
+# global.dnsRoot is injected by the Argo CD ApplicationSet (k8s-bootstrap).
+# Reachable at https://code.<dnsRoot>; authentication is done by authentik
+# (Traefik ForwardAuth -> embedded outpost, see k8s-apps/authentik forwardAuth),
+# so code-server itself runs with --auth none.
+
+# replace with the custom shell image later (must keep code-server inside)
+image: codercom/code-server:4.146.0
+
+# persistent /home/coder: settings, extensions, cloned repos
+storage:
+  size: 20Gi
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    memory: 4Gi
+
+# extra environment for the shell (tool credentials come later)
+env: []

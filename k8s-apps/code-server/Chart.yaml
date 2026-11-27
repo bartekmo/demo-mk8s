@@ -1,0 +1,6 @@
+apiVersion: v2
+name: code-server
+description: Browser IDE (code-server) for the demo user, behind authentik forward auth
+type: application
+version: 0.1.0
+appVersion: "4.146.0"

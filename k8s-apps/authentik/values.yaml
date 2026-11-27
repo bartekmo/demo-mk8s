@@ -29,6 +29,17 @@ oidcClients:
     redirectPath: /users/auth/openid_connect/callback
     secretEnv: GITLAB_CLIENT_SECRET
 
+# Domain-level forward auth for apps without native SSO (code-server, ...):
+# authentik's embedded outpost answers Traefik ForwardAuth requests; login
+# happens on auth.<dnsRoot> and the session cookie covers *.<dnsRoot>.
+# Apps opt in with a Traefik Middleware pointing at
+#   http://authentik-server.authentik.svc.cluster.local/outpost.goauthentik.io/auth/traefik
+# Only allowedUsers get through.
+forwardAuth:
+  enabled: true
+  allowedUsers:
+    - demo
+
 authentik:
   global:
     env:

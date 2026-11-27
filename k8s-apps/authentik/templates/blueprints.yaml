@@ -87,3 +87,47 @@ data:
           provider: !KeyOf {{ .name }}-provider
           meta_launch_url: https://{{ .host }}.{{ $dns }}
       {{- end }}
+
+      {{- if .Values.forwardAuth.enabled }}
+      # --- Domain-level forward auth (Traefik ForwardAuth -> embedded outpost) ---
+      - model: authentik_providers_proxy.proxyprovider
+        id: forward-auth-provider
+        identifiers:
+          name: forward-auth
+        attrs:
+          mode: forward_domain
+          external_host: https://auth.{{ $dns }}
+          cookie_domain: {{ $dns }}
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          # also set by the serializer; explicit because blueprint defaults are empty
+          grant_types:
+            - authorization_code
+
+      - model: authentik_core.application
+        id: forward-auth-app
+        identifiers:
+          slug: forward-auth
+        attrs:
+          name: Forward auth (IDE and tools)
+          provider: !KeyOf forward-auth-provider
+          meta_launch_url: https://code.{{ $dns }}
+
+      # once any binding exists, only bound users may use the application
+      {{- range $i, $u := .Values.forwardAuth.allowedUsers }}
+      - model: authentik_policies.policybinding
+        identifiers:
+          target: !KeyOf forward-auth-app
+          user: !Find [authentik_core.user, [username, {{ $u }}]]
+        attrs:
+          order: {{ $i }}
+      {{- end }}
+
+      # serve the provider from the outpost built into authentik-server
+      - model: authentik_outposts.outpost
+        identifiers:
+          managed: goauthentik.io/outposts/embedded
+        attrs:
+          providers:
+            - !KeyOf forward-auth-provider
+      {{- end }}
