@@ -17,5 +17,21 @@ resources:
   limits:
     memory: 4Gi
 
-# extra environment for the shell (tool credentials come later)
+# GitLab integration. The demo user's token comes from Secret
+# code-server-gitlab (generated in-cluster by the node bootstrap and seeded
+# into GitLab by its post-start script). It authenticates git (credential
+# helper), glab and the GitLab Workflow extension via environment variables.
+gitlab:
+  tokenSecret: code-server-gitlab
+  # cloned into ~/projects/<name> on first start (waits for GitLab)
+  repos:
+    - demo-apps/codeshell
+  # folder opened in the IDE
+  openFolder: /home/coder/projects/codeshell
+
+# installed into the persistent home on start (from Open VSX)
+extensions:
+  - gitlab.gitlab-workflow
+
+# extra environment for the shell
 env: []

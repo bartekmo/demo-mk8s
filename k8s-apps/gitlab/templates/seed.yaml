@@ -1,0 +1,8 @@
+# Initial content of demo-apps/codeshell, committed by post-start.sh when the
+# project's repository is still empty (see seed/codeshell/).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gitlab-seed-codeshell
+data:
+{{ (.Files.Glob "seed/codeshell/*").AsConfig | indent 2 }}

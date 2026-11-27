@@ -36,6 +36,9 @@ spec:
             - name: GITLAB_RUNNER_BOOTSTRAP_TOKEN
               valueFrom:
                 secretKeyRef: { name: gitlab-bootstrap, key: runner-bootstrap-token }
+            - name: GITLAB_DEMO_TOKEN
+              valueFrom:
+                secretKeyRef: { name: gitlab-bootstrap, key: demo-token }
           ports:
             - { name: http, containerPort: 80 }
             - { name: registry, containerPort: 5050 }
@@ -63,6 +66,7 @@ spec:
             - { name: logs, mountPath: /var/log/gitlab }
             - { name: shm, mountPath: /dev/shm }
             - { name: post-start, mountPath: /opt/post-start }
+            - { name: seed-codeshell, mountPath: /opt/seed/codeshell }
       volumes:
         - name: logs
           emptyDir: {}
@@ -75,6 +79,10 @@ spec:
             defaultMode: 0755
             items:
               - { key: post-start.sh, path: post-start.sh }
+              - { key: bootstrap.rb, path: bootstrap.rb }
+        - name: seed-codeshell
+          configMap:
+            name: gitlab-seed-codeshell
   volumeClaimTemplates:
     - metadata:
         name: data

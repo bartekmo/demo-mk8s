@@ -121,6 +121,11 @@ ensure_key gitlab gitlab-bootstrap oidc-client-secret "$(get_key authentik authe
 ensure_key gitlab gitlab-bootstrap runner-bootstrap-token "glpat-$(gen)"
 ensure_key gitlab-runner gitlab-runner-bootstrap token "$(get_key gitlab gitlab-bootstrap runner-bootstrap-token)"
 
+# demo user's GitLab token (api, read/write_repository, read_registry): seeded
+# by GitLab on start, used by code-server for git, glab and the GitLab extension
+ensure_key gitlab gitlab-bootstrap demo-token "glpat-$(gen)"
+ensure_key code-server code-server-gitlab token "$(get_key gitlab gitlab-bootstrap demo-token)"
+
 # Traefik terminates TLS, so argocd-server serves plain HTTP
 kubectl -n argocd patch cm argocd-cmd-params-cm --type merge \
   -p '{"data":{"server.insecure":"true"}}'

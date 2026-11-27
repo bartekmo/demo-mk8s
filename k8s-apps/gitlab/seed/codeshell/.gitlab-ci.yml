@@ -1,0 +1,22 @@
+# Builds the codeshell image with rootless BuildKit (no privileged pods; the
+# cluster runner allows unconfined seccomp/AppArmor for the build container)
+# and pushes it to this project's container registry.
+build:
+  stage: build
+  image:
+    name: moby/buildkit:v0.35.1-rootless
+    entrypoint: [""]
+  variables:
+    BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
+  before_script:
+    - mkdir -p ~/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')\"}}}" > ~/.docker/config.json
+  script:
+    - >
+      buildctl-daemonless.sh build
+      --frontend dockerfile.v0
+      --local context=.
+      --local dockerfile=.
+      --output type=image,\"name=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA,$CI_REGISTRY_IMAGE:latest\",push=true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

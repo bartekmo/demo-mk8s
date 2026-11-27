@@ -1,4 +1,34 @@
 {{- $dns := required "global.dnsRoot is required" .Values.global.dnsRoot -}}
+{{- define "code-server.gitlabEnv" -}}
+{{- $dns := .Values.global.dnsRoot -}}
+- name: GITLAB_TOKEN
+  valueFrom:
+    secretKeyRef: { name: {{ .Values.gitlab.tokenSecret }}, key: token }
+# glab
+- name: GITLAB_HOST
+  value: gitlab.{{ $dns }}
+# GitLab Workflow extension (PAT via env, read when VS Code starts)
+- name: GITLAB_WORKFLOW_INSTANCE_URL
+  value: https://gitlab.{{ $dns }}
+- name: GITLAB_WORKFLOW_TOKEN
+  valueFrom:
+    secretKeyRef: { name: {{ .Values.gitlab.tokenSecret }}, key: token }
+# git config via environment: token credential helper + identity
+- name: GIT_CONFIG_COUNT
+  value: "3"
+- name: GIT_CONFIG_KEY_0
+  value: credential.https://gitlab.{{ $dns }}.helper
+- name: GIT_CONFIG_VALUE_0
+  value: '!f() { test "$1" = get && echo username=oauth2 && echo "password=$GITLAB_TOKEN"; }; f'
+- name: GIT_CONFIG_KEY_1
+  value: user.name
+- name: GIT_CONFIG_VALUE_1
+  value: Demo User
+- name: GIT_CONFIG_KEY_2
+  value: user.email
+- name: GIT_CONFIG_VALUE_2
+  value: demo@{{ $dns }}
+{{- end }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -29,6 +59,39 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000 # image runs as "coder" (1000)
+      initContainers:
+        # extensions go to the persistent home; already installed = no-op
+        - name: extensions
+          image: {{ .Values.image }}
+          command: [/bin/sh, -c]
+          args:
+            - |
+              {{- range .Values.extensions }}
+              code-server --install-extension {{ . }} || echo "WARN: could not install {{ . }}"
+              {{- end }}
+          volumeMounts:
+            - { name: home, mountPath: /home/coder }
+        # clone the demo repos once; waits for GitLab, DNS/cert and seeded content
+        - name: clone
+          image: {{ .Values.image }}
+          env:
+            {{- include "code-server.gitlabEnv" . | nindent 12 }}
+          command: [/bin/sh, -c]
+          args:
+            - |
+              mkdir -p /home/coder/projects
+              {{- range .Values.gitlab.repos }}
+              dir=/home/coder/projects/{{ base . }}
+              if [ ! -d "$dir/.git" ]; then
+                until rm -rf "$dir.tmp" && git clone -q https://gitlab.{{ $dns }}/{{ . }}.git "$dir.tmp" \
+                      && git -C "$dir.tmp" rev-parse -q --verify HEAD >/dev/null; do
+                  echo "waiting for {{ . }} on GitLab..."; sleep 20
+                done
+                mv "$dir.tmp" "$dir" && echo "cloned {{ . }}"
+              fi
+              {{- end }}
+          volumeMounts:
+            - { name: home, mountPath: /home/coder }
       containers:
         - name: code-server
           image: {{ .Values.image }}
@@ -38,7 +101,11 @@ spec:
             - --disable-telemetry
             - --disable-update-check
             - --proxy-domain=code.{{ $dns }}
+            {{- with .Values.gitlab.openFolder }}
+            - {{ . }}
+            {{- end }}
           env:
+            {{- include "code-server.gitlabEnv" . | nindent 12 }}
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

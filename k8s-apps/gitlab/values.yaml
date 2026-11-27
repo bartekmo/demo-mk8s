@@ -3,7 +3,8 @@
 #
 # Secrets come from the "gitlab-bootstrap" Secret generated in-cluster by the
 # node bootstrap: root-password, oidc-client-secret (shared with authentik),
-# runner-bootstrap-token (shared with gitlab-runner, see templates/configmap.yaml).
+# runner-bootstrap-token (shared with gitlab-runner), demo-token (shared with
+# code-server). Both are seeded as GitLab tokens by templates/configmap.yaml.
 
 image: gitlab/gitlab-ce:19.6.2-ce.0
 
