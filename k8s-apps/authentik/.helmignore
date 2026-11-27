@@ -1,1 +1,4 @@
+# images referenced by URL (raw GitHub), not needed in the chart package
 *.jpg
+*.png
+*.webp

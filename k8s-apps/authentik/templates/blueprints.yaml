@@ -86,6 +86,10 @@ data:
           name: {{ .title }}
           provider: !KeyOf {{ .name }}-provider
           meta_launch_url: https://{{ .host }}.{{ $dns }}
+          open_in_new_tab: true
+          {{- with .icon }}
+          meta_icon: {{ . | quote }}
+          {{- end }}
       {{- end }}
 
       {{- if .Values.forwardAuth.enabled }}
@@ -109,9 +113,13 @@ data:
         identifiers:
           slug: forward-auth
         attrs:
-          name: Forward auth (IDE and tools)
+          name: {{ .Values.forwardAuth.title | quote }}
           provider: !KeyOf forward-auth-provider
           meta_launch_url: https://code.{{ $dns }}
+          open_in_new_tab: true
+          {{- with .Values.forwardAuth.icon }}
+          meta_icon: {{ . | quote }}
+          {{- end }}
 
       # once any binding exists, only bound users may use the application
       {{- range $i, $u := .Values.forwardAuth.allowedUsers }}

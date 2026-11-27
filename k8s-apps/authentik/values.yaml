@@ -14,7 +14,8 @@ branding:
   favicon: ""
 
 # OIDC clients registered in authentik by the blueprint. client_id = name,
-# redirect = https://<host>.<dnsRoot><redirectPath>. Each secretEnv must be
+# redirect = https://<host>.<dnsRoot><redirectPath>; icon = tile icon URL
+# (tiles open in a new tab). Each secretEnv must be
 # wired to an authentik-bootstrap key in authentik.global.env below (the node
 # bootstrap generates "<name>-client-secret" and copies it to the app).
 oidcClients:
@@ -23,11 +24,13 @@ oidcClients:
     host: argocd
     redirectPath: /auth/callback
     secretEnv: ARGOCD_CLIENT_SECRET
+    icon: https://github.com/bartekmo/demo-mk8s/blob/main/k8s-apps/authentik/logos/argocd.png?raw=true
   - name: gitlab
     title: GitLab
     host: gitlab
     redirectPath: /users/auth/openid_connect/callback
     secretEnv: GITLAB_CLIENT_SECRET
+    icon: https://github.com/bartekmo/demo-mk8s/blob/main/k8s-apps/authentik/logos/gitlab.webp?raw=true
 
 # Domain-level forward auth for apps without native SSO (code-server, ...):
 # authentik's embedded outpost answers Traefik ForwardAuth requests; login
@@ -37,6 +40,9 @@ oidcClients:
 # Only allowedUsers get through.
 forwardAuth:
   enabled: true
+  # application tile in the authentik user dashboard (opens code-server)
+  title: IDE
+  icon: https://github.com/bartekmo/demo-mk8s/blob/main/k8s-apps/authentik/logos/code.png?raw=true
   allowedUsers:
     - demo
 
