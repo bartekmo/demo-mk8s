@@ -226,6 +226,13 @@ resource "google_compute_instance" "mk8s" {
         dns_root      = var.dns_root
         gitlab_ssh_ip = local.gitlab_ssh_ip
       })
+      argocd_code_server_app = templatefile("${path.module}/../k8s-bootstrap/argocd-code-server-app.yaml.tftpl", {
+        repo_url           = var.gitops_repo_url
+        repo_path          = var.gitops_repo_path
+        repo_revision      = var.gitops_repo_revision
+        dns_root           = var.dns_root
+        overrides_repo_url = "http://gitlab.gitlab.svc.cluster.local/demo-apps/codeshell.git"
+      })
       metadata_concealment = file("${path.module}/../k8s-bootstrap/metadata-concealment.yaml")
     })
   }

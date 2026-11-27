@@ -1,0 +1,5 @@
+# Settings for the IDE (code-server) on the demo cluster.
+# Argo CD reads this file as an extra Helm values file for the code-server app
+# (chart: k8s-apps/code-server in the platform repo). The CI "deploy" job sets
+# `image` after every successful build; edit other keys here to change the IDE.
+image: codercom/code-server:4.146.0

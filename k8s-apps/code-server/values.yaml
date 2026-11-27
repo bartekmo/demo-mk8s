@@ -3,7 +3,10 @@
 # (Traefik ForwardAuth -> embedded outpost, see k8s-apps/authentik forwardAuth),
 # so code-server itself runs with --auth none.
 
-# replace with the custom shell image later (must keep code-server inside)
+# Fallback only. The effective image is set in GitLab, in
+# demo-apps/codeshell:deploy/code-server-values.yaml, which Argo CD layers on
+# top of these values (see k8s-bootstrap/argocd-code-server-app.yaml.tftpl);
+# codeshell's CI updates it after every build. Must contain code-server.
 image: codercom/code-server:4.146.0
 
 # persistent /home/coder: settings, extensions, cloned repos

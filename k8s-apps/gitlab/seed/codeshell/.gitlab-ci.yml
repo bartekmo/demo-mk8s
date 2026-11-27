@@ -1,6 +1,10 @@
-# Builds the codeshell image with rootless BuildKit (no privileged pods; the
-# cluster runner allows unconfined seccomp/AppArmor for the build container)
-# and pushes it to this project's container registry.
+# build:  codeshell image with rootless BuildKit (no privileged pods; the
+#         cluster runner allows unconfined seccomp/AppArmor for the build
+#         container) -> this project's container registry
+# deploy: point the IDE at the new image by updating
+#         deploy/code-server-values.yaml (Argo CD rolls it out)
+stages: [build, deploy]
+
 build:
   stage: build
   image:
@@ -18,5 +22,27 @@ build:
       --local context=.
       --local dockerfile=.
       --output type=image,\"name=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA,$CI_REGISTRY_IMAGE:latest\",push=true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Commits via the API with DEPLOY_TOKEN (masked CI variable, set by the
+# cluster bootstrap); "[skip ci]" keeps this commit from triggering a pipeline.
+deploy:
+  stage: deploy
+  image: alpine:3
+  needs: [build]
+  variables:
+    VALUES_FILE: deploy/code-server-values.yaml
+  script:
+    - apk add --no-cache curl
+    - sed -i "s|^image:.*|image: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA|" "$VALUES_FILE"
+    - grep '^image:' "$VALUES_FILE"
+    - >
+      curl --fail-with-body -sS -X PUT
+      -H "PRIVATE-TOKEN: $DEPLOY_TOKEN"
+      --data-urlencode "branch=$CI_DEFAULT_BRANCH"
+      --data-urlencode "commit_message=Deploy codeshell $CI_COMMIT_SHORT_SHA to the IDE [skip ci]"
+      --data-urlencode "content@$VALUES_FILE"
+      "$CI_API_V4_URL/projects/$CI_PROJECT_ID/repository/files/deploy%2Fcode-server-values.yaml"
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

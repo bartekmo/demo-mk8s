@@ -15,6 +15,11 @@ spec:
         revision: ${repo_revision}
         directories:
           - path: ${repo_path}/*
+          # has its own Application (argocd-code-server-app.yaml.tftpl): it
+          # also reads values from GitLab, which the other apps must not
+          # depend on (GitLab itself is one of them)
+          - path: ${repo_path}/code-server
+            exclude: true
   template:
     metadata:
       name: '{{.path.basename}}'

@@ -149,6 +149,11 @@ kubectl apply -f - <<'YAML'
 ${argocd_appset}
 YAML
 
+# IDE: own Application (also reads its values from GitLab, see template)
+kubectl apply -f - <<'YAML'
+${argocd_code_server_app}
+YAML
+
 # Self-check: pods must NOT reach the metadata server (logged to serial console)
 check=$(kubectl run metadata-check --rm -i --restart=Never --image=curlimages/curl \
   --pod-running-timeout=3m --command -- sh -c \

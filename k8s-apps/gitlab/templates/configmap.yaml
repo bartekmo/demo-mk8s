@@ -119,8 +119,9 @@ data:
       if project.empty_repo? && Dir.exist?(seed_dir)
         files = Dir.children(seed_dir).reject { |f| f.start_with?("..") }
                    .select { |f| File.file?(File.join(seed_dir, f)) }.sort
+        # ConfigMap keys can't contain "/": "deploy__x.yaml" -> "deploy/x.yaml"
         actions = files.map do |f|
-          { action: :create, file_path: f, content: File.read(File.join(seed_dir, f)) }
+          { action: :create, file_path: f.gsub("__", "/"), content: File.read(File.join(seed_dir, f)) }
         end
         project.repository.commit_files(owner, branch_name: project.default_branch_or_main,
                                         message: "Initial #{path} scaffold", actions: actions)
@@ -168,6 +169,11 @@ data:
     group.add_member(demo, Gitlab::Access::OWNER) unless group.member?(demo, Gitlab::Access::OWNER)
 
     # --- projects ---
-    ensure_project(group, demo, "codeshell", Gitlab::VisibilityLevel::PUBLIC, "/opt/seed/codeshell")
+    codeshell = ensure_project(group, demo, "codeshell", Gitlab::VisibilityLevel::PUBLIC, "/opt/seed/codeshell")
+
+    # CI "deploy" job commits the new image tag to deploy/code-server-values.yaml
+    var = codeshell.variables.find_or_initialize_by(key: "DEPLOY_TOKEN")
+    var.update!(value: ENV["GITLAB_DEMO_TOKEN"].to_s, masked: true, protected: false)
+    log "codeshell CI variable DEPLOY_TOKEN set"
 
     log "demo bootstrap done"
