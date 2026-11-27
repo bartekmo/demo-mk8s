@@ -1,0 +1,175 @@
+{{- $dns := required "global.dnsRoot is required" .Values.global.dnsRoot -}}
+{{- $repo := .Values.image.repository | default (printf "registry.%s/demo-apps/wordpress" $dns) -}}
+{{- $auth := printf "https://auth.%s/application/o" $dns -}}
+{{- define "wordpress.oidcConfig" -}}
+{{- $auth := index . 0 }}{{ $o := index . 1 -}}
+define('OIDC_CLIENT_ID', '{{ $o.clientId }}');
+define('OIDC_CLIENT_SECRET', getenv('WORDPRESS_OIDC_CLIENT_SECRET'));
+define('OIDC_CLIENT_SCOPE', 'openid email profile');
+define('OIDC_ENDPOINT_LOGIN_URL', '{{ $auth }}/authorize/');
+define('OIDC_ENDPOINT_TOKEN_URL', '{{ $auth }}/token/');
+define('OIDC_ENDPOINT_USERINFO_URL', '{{ $auth }}/userinfo/');
+define('OIDC_ENDPOINT_JWKS_URL', '{{ $auth }}/{{ $o.clientId }}/jwks/');
+define('OIDC_ENDPOINT_LOGOUT_URL', '{{ $auth }}/{{ $o.clientId }}/end-session/');
+define('OIDC_ISSUER', '{{ $auth }}/{{ $o.clientId }}/');
+define('OIDC_LOGIN_TYPE', '{{ $o.loginType }}');
+define('OIDC_LINK_EXISTING_USERS', 1);
+define('OIDC_LINK_UNVERIFIED_USERS', 1);
+define('OIDC_CREATE_IF_DOES_NOT_EXIST', 0);
+define('OIDC_REDIRECT_USER_BACK', 1);
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wordpress-uploads
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: {{ .Values.storage.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  labels:
+    app.kubernetes.io/name: wordpress
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # RWO uploads volume
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wordpress
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wordpress
+    spec:
+      securityContext:
+        fsGroup: 33 # www-data
+      containers:
+        - name: wordpress
+          image: {{ $repo }}:{{ .Values.image.tag }}
+          imagePullPolicy: Always
+          # env interface of the official wordpress image (wp-config-docker.php)
+          env:
+            - name: WORDPRESS_DB_HOST
+              value: {{ .Values.db.host | quote }}
+            - name: WORDPRESS_DB_NAME
+              value: {{ .Values.db.name | quote }}
+            - name: WORDPRESS_DB_USER
+              value: {{ .Values.db.user | quote }}
+            - name: WORDPRESS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.db.passwordSecret }}, key: {{ .Values.db.passwordKey }} }
+            - name: WORDPRESS_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.oidc.clientSecret }}, key: client-secret }
+            # PHP appended to wp-config.php
+            - name: WORDPRESS_CONFIG_EXTRA
+              value: |
+                {{- include "wordpress.oidcConfig" (list $auth .Values.oidc) | nindent 16 }}
+          ports:
+            - { name: http, containerPort: 80 }
+          # plain TCP: until "setup" has installed the site, pages redirect
+          readinessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            # the image's entrypoint copies WordPress here on every start
+            - { name: html, mountPath: /var/www/html }
+            - { name: uploads, mountPath: /var/www/html/wp-content/uploads }
+        # wp-cli on the same files and wp-config.php (shared emptyDir)
+        - name: setup
+          image: {{ .Values.site.cliImage }}
+          securityContext:
+            runAsUser: 33 # www-data of the Debian-based wordpress image
+            runAsGroup: 33
+          workingDir: /var/www/html
+          env:
+            - { name: HOME, value: /tmp }
+            - name: WORDPRESS_DB_HOST
+              value: {{ .Values.db.host | quote }}
+            - name: WORDPRESS_DB_NAME
+              value: {{ .Values.db.name | quote }}
+            - name: WORDPRESS_DB_USER
+              value: {{ .Values.db.user | quote }}
+            - name: WORDPRESS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.db.passwordSecret }}, key: {{ .Values.db.passwordKey }} }
+            - name: WORDPRESS_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.oidc.clientSecret }}, key: client-secret }
+            # PHP appended to wp-config.php
+            - name: WORDPRESS_CONFIG_EXTRA
+              value: |
+                {{- include "wordpress.oidcConfig" (list $auth .Values.oidc) | nindent 16 }}
+          command: [/bin/sh, -c]
+          args:
+            - |
+              until [ -s wp-config.php ]; do sleep 3; done
+              until wp core is-installed 2>/dev/null; do
+                wp core install --skip-email \
+                  --url="https://blog.{{ $dns }}" --title={{ .Values.site.title | quote }} \
+                  --admin_user={{ .Values.site.admin | quote }} --admin_email="{{ .Values.site.admin }}@{{ $dns }}" \
+                  --admin_password="$(head -c 32 /dev/urandom | base64)" \
+                  || { echo "waiting for the database..."; sleep 10; }
+              done
+              wp user update {{ .Values.site.admin | quote }} --display_name="Demo User" --first_name=Demo --last_name=User
+              wp core update-db
+              wp plugin activate daggerhart-openid-connect-generic
+              # not settable by constant: match WordPress users by user name
+              wp option update openid_connect_generic_settings '{"identify_with_username":1}' --format=json
+              echo "setup done"
+              trap 'exit 0' TERM
+              while :; do sleep 3600 & wait; done
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 256Mi }
+          volumeMounts:
+            - { name: html, mountPath: /var/www/html }
+      volumes:
+        - name: html
+          emptyDir: {}
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: wordpress-uploads
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress
+spec:
+  selector:
+    app.kubernetes.io/name: wordpress
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+# public: no authentik middleware
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wordpress
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: blog.{{ $dns }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: wordpress, port: { name: http } }
+  tls:
+    - hosts:
+        - blog.{{ $dns }}
+      secretName: wordpress-tls

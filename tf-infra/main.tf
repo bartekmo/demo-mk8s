@@ -52,6 +52,13 @@ resource "google_compute_firewall" "mk8s" {
 locals {
   zone = "${var.region}-a"
 
+  # Argo CD apps that also read a values file (image tag written by CI) from
+  # a GitLab project; deployed outside the ApplicationSet (see node.tftpl)
+  gitlab_apps = {
+    code-server = { project = "demo-apps/codeshell", revision = "main", values_file = "deploy/code-server-values.yaml" }
+    wordpress   = { project = "demo-apps/wordpress", revision = "trunk", values_file = "deploy/values.yaml" }
+  }
+
   # FortiCNAPP (Lacework) credentials for the IDE shell: only the lw_* variables
   # that are set, as LW_* environment variables (Secret, see node.tftpl)
   lw_env = {
@@ -236,14 +243,20 @@ resource "google_compute_instance" "mk8s" {
         repo_revision = var.gitops_repo_revision
         dns_root      = var.dns_root
         gitlab_ssh_ip = local.gitlab_ssh_ip
+        gitlab_apps   = keys(local.gitlab_apps)
       })
-      argocd_code_server_app = templatefile("${path.module}/../k8s-bootstrap/argocd-code-server-app.yaml.tftpl", {
-        repo_url           = var.gitops_repo_url
-        repo_path          = var.gitops_repo_path
-        repo_revision      = var.gitops_repo_revision
-        dns_root           = var.dns_root
-        overrides_repo_url = "http://gitlab.gitlab.svc.cluster.local/demo-apps/codeshell.git"
-      })
+      argocd_gitlab_apps = join("\n---\n", [
+        for name, app in local.gitlab_apps : templatefile("${path.module}/../k8s-bootstrap/argocd-gitlab-app.yaml.tftpl", {
+          name               = name
+          repo_url           = var.gitops_repo_url
+          repo_path          = var.gitops_repo_path
+          repo_revision      = var.gitops_repo_revision
+          dns_root           = var.dns_root
+          overrides_repo_url = "http://gitlab.gitlab.svc.cluster.local/${app.project}.git"
+          overrides_revision = app.revision
+          values_file        = app.values_file
+        })
+      ])
       metadata_concealment = file("${path.module}/../k8s-bootstrap/metadata-concealment.yaml")
       # JSON is valid YAML; base64 data avoids any quoting issues
       code_server_lw_secret = jsonencode({

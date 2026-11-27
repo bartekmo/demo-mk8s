@@ -26,9 +26,18 @@ resources:
 # helper), glab and the GitLab Workflow extension via environment variables.
 gitlab:
   tokenSecret: code-server-gitlab
-  # cloned into ~/projects/<name> on first start (waits for GitLab)
+  # cloned into ~/projects/<name> on first start (waits for GitLab).
+  # prepare (optional), applied once right after the first clone and left
+  # uncommitted for the demo user: delete the "remove" paths, then copy in
+  # the files of workspace/<prepare.files>/ from this chart.
   repos:
-    - demo-apps/codeshell
+    - path: demo-apps/codeshell
+    # imported from upstream wordpress-develop; the prepared changes replace
+    # its GitHub CI with the GitLab build - nothing runs until they're pushed
+    - path: demo-apps/wordpress
+      prepare:
+        remove: [.github]
+        files: wordpress
   # folder opened in the IDE
   openFolder: /home/coder/projects/codeshell
 

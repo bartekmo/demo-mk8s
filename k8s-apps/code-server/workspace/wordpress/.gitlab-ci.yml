@@ -1,0 +1,55 @@
+# build:  WordPress image (Dockerfile) with rootless BuildKit -> this
+#         project's container registry
+# deploy: point the blog at the new image by writing deploy/values.yaml
+#         (Argo CD app "wordpress" layers it on top of its chart values)
+stages: [build, deploy]
+
+build:
+  stage: build
+  image:
+    name: moby/buildkit:v0.35.1-rootless
+    entrypoint: [""]
+  variables:
+    BUILDKITD_FLAGS: --oci-worker-no-process-sandbox
+  before_script:
+    - mkdir -p ~/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')\"}}}" > ~/.docker/config.json
+  script:
+    - >
+      buildctl-daemonless.sh build
+      --frontend dockerfile.v0
+      --local context=.
+      --local dockerfile=.
+      --output type=image,\"name=$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA,$CI_REGISTRY_IMAGE:latest\",push=true
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Commits via the API with DEPLOY_TOKEN (masked CI variable, set by the
+# cluster bootstrap); "[skip ci]" keeps this commit from triggering a pipeline.
+deploy:
+  stage: deploy
+  image: alpine:3
+  needs: [build]
+  variables:
+    VALUES_FILE: deploy/values.yaml
+  script:
+    - apk add --no-cache curl
+    - |
+      mkdir -p "$(dirname "$VALUES_FILE")"
+      printf 'image:\n  tag: "%s"\n' "$CI_COMMIT_SHORT_SHA" > "$VALUES_FILE"
+      cat "$VALUES_FILE"
+      url="$CI_API_V4_URL/projects/$CI_PROJECT_ID/repository/files/$(echo "$VALUES_FILE" | sed 's|/|%2F|g')"
+      # create on the first deploy, update afterwards
+      if curl -sf -o /dev/null -H "PRIVATE-TOKEN: $DEPLOY_TOKEN" "$url?ref=$CI_DEFAULT_BRANCH"; then
+        method=PUT
+      else
+        method=POST
+      fi
+      curl --fail-with-body -sS -X "$method" \
+        -H "PRIVATE-TOKEN: $DEPLOY_TOKEN" \
+        --data-urlencode "branch=$CI_DEFAULT_BRANCH" \
+        --data-urlencode "commit_message=Deploy wordpress $CI_COMMIT_SHORT_SHA [skip ci]" \
+        --data-urlencode "content@$VALUES_FILE" \
+        "$url"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

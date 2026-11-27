@@ -81,17 +81,31 @@ spec:
             - |
               mkdir -p /home/coder/projects
               {{- range .Values.gitlab.repos }}
-              dir=/home/coder/projects/{{ base . }}
+              dir=/home/coder/projects/{{ base .path }}
               if [ ! -d "$dir/.git" ]; then
-                until rm -rf "$dir.tmp" && git clone -q https://gitlab.{{ $dns }}/{{ . }}.git "$dir.tmp" \
+                until rm -rf "$dir.tmp" && git clone -q https://gitlab.{{ $dns }}/{{ .path }}.git "$dir.tmp" \
                       && git -C "$dir.tmp" rev-parse -q --verify HEAD >/dev/null; do
-                  echo "waiting for {{ . }} on GitLab..."; sleep 20
+                  echo "waiting for {{ .path }} on GitLab..."; sleep 20
                 done
-                mv "$dir.tmp" "$dir" && echo "cloned {{ . }}"
+                {{- with .prepare }}
+                {{- range .remove }}
+                rm -rf "$dir.tmp/{{ . }}"
+                {{- end }}
+                {{- with .files }}
+                # -L: ConfigMap files are symlinks; .[!.]* skips the ..data dirs
+                cp -L /workspace/{{ . }}/* /workspace/{{ . }}/.[!.]* "$dir.tmp/"
+                {{- end }}
+                {{- end }}
+                mv "$dir.tmp" "$dir" && echo "cloned {{ .path }}"
               fi
               {{- end }}
           volumeMounts:
             - { name: home, mountPath: /home/coder }
+            {{- range .Values.gitlab.repos }}
+            {{- with (.prepare).files }}
+            - { name: workspace-{{ . }}, mountPath: /workspace/{{ . }} }
+            {{- end }}
+            {{- end }}
       containers:
         - name: code-server
           image: {{ .Values.image }}
@@ -126,6 +140,12 @@ spec:
           volumeMounts:
             - { name: home, mountPath: /home/coder }
       volumes:
+        {{- range .Values.gitlab.repos }}
+        {{- with (.prepare).files }}
+        - name: workspace-{{ . }}
+          configMap: { name: code-server-workspace-{{ . }} }
+        {{- end }}
+        {{- end }}
         - name: home
           persistentVolumeClaim:
             claimName: code-server-home

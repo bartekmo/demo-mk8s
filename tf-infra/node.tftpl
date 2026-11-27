@@ -103,7 +103,7 @@ get_key() { kubectl -n "$1" get secret "$2" -o jsonpath="{.data.$3}" | base64 -d
 # authentik: app/DB secrets, akadmin + "demo" passwords, OIDC client secrets
 ensure_key authentik authentik-bootstrap secret-key "$(openssl rand -base64 60 | tr -dc 'A-Za-z0-9')"
 for k in postgres-password postgres-admin-password akadmin-password demo-password \
-         argocd-client-secret gitlab-client-secret; do
+         argocd-client-secret gitlab-client-secret wordpress-client-secret; do
   ensure_key authentik authentik-bootstrap "$k" "$(gen)"
 done
 
@@ -125,6 +125,13 @@ ensure_key gitlab-runner gitlab-runner-bootstrap token "$(get_key gitlab gitlab-
 # by GitLab on start, used by code-server for git, glab and the GitLab extension
 ensure_key gitlab gitlab-bootstrap demo-token "glpat-$(gen)"
 ensure_key code-server code-server-gitlab token "$(get_key gitlab gitlab-bootstrap demo-token)"
+
+# MariaDB: root + WordPress DB user passwords; the WordPress app gets a copy
+ensure_key mariadb mariadb-bootstrap root-password "$(gen)"
+ensure_key mariadb mariadb-bootstrap wordpress-password "$(gen)"
+ensure_key wordpress wordpress-db password "$(get_key mariadb mariadb-bootstrap wordpress-password)"
+# WordPress: OIDC client secret (copy) for the OpenID Connect Generic plugin
+ensure_key wordpress wordpress-oidc client-secret "$(get_key authentik authentik-bootstrap wordpress-client-secret)"
 
 # FortiCNAPP credentials for the IDE shell (LW_* env, only the lw_* Terraform
 # variables that are set). Client-side apply also drops keys of variables that
@@ -158,7 +165,7 @@ kubectl apply -f - <<'YAML'
 ${argocd_appset}
 YAML
 
-# IDE: own Application (also reads its values from GitLab, see template)
+# Apps that also read values from GitLab (IDE, blog): own Applications
 # Clusters bootstrapped before code-server was excluded from the ApplicationSet
 # still have a generated app of the same name, owned by the ApplicationSet. The
 # controller deletes it (non-cascading: pods/PVC stay) - wait for that, or it
@@ -171,7 +178,7 @@ for i in $(seq 36); do
   sleep 5
 done
 kubectl apply -f - <<'YAML'
-${argocd_code_server_app}
+${argocd_gitlab_apps}
 YAML
 
 # Self-check: pods must NOT reach the metadata server (logged to serial console)

@@ -107,16 +107,20 @@ data:
       log "#{name} token seeded for #{user.username}"
     end
 
-    def ensure_project(group, owner, path, visibility, seed_dir)
+    # seed_dir: commit these files into an empty repo
+    # import_url: import the repository (with history) instead; runs in
+    #             Sidekiq, creates no commit of its own and triggers no pipeline
+    def ensure_project(group, owner, path, visibility, seed_dir: nil, import_url: nil)
       project = Project.find_by_full_path("#{group.full_path}/#{path}")
       unless project
-        project = Projects::CreateService.new(owner, name: path, path: path,
-                                              namespace_id: group.id,
-                                              visibility_level: visibility).execute
+        params = { name: path, path: path, namespace_id: group.id, visibility_level: visibility }
+        params.merge!(import_url: import_url, import_type: "git") if import_url
+        project = Projects::CreateService.new(owner, params).execute
         raise "project #{path}: #{project.errors.full_messages.join(', ')}" unless project.persisted?
-        log "project #{project.full_path} created"
+        log "project #{project.full_path} created#{" (importing #{import_url})" if import_url}"
       end
-      if project.empty_repo? && Dir.exist?(seed_dir)
+      log "project #{project.full_path} import: #{project.import_status}" if import_url
+      if seed_dir && project.empty_repo? && Dir.exist?(seed_dir)
         files = Dir.children(seed_dir).reject { |f| f.start_with?("..") }
                    .select { |f| File.file?(File.join(seed_dir, f)) }.sort
         # ConfigMap keys can't contain "/": "deploy__x.yaml" -> "deploy/x.yaml"
@@ -135,6 +139,9 @@ data:
     # --- instance settings ---
     ApplicationSetting.current.update!(signup_enabled: false)
     log "sign-up disabled"
+    # "Repository by URL" import (used for demo-apps/wordpress)
+    sources = ApplicationSetting.current.import_sources
+    ApplicationSetting.current.update!(import_sources: sources + ["git"]) unless sources.include?("git")
 
     # --- runner registration token (create_runner only, used by gitlab-runner app) ---
     seed_token(root, "runner-bootstrap", %w[create_runner], ENV["GITLAB_RUNNER_BOOTSTRAP_TOKEN"])
@@ -169,11 +176,18 @@ data:
     group.add_member(demo, Gitlab::Access::OWNER) unless group.member?(demo, Gitlab::Access::OWNER)
 
     # --- projects ---
-    codeshell = ensure_project(group, demo, "codeshell", Gitlab::VisibilityLevel::PUBLIC, "/opt/seed/codeshell")
+    codeshell = ensure_project(group, demo, "codeshell", Gitlab::VisibilityLevel::PUBLIC,
+                               seed_dir: "/opt/seed/codeshell")
+    # upstream WordPress with history; the IDE prepares (but does not commit)
+    # the switch from GitHub CI to the GitLab build, see k8s-apps/code-server
+    wordpress = ensure_project(group, demo, "wordpress", Gitlab::VisibilityLevel::PUBLIC,
+                               import_url: "https://github.com/WordPress/wordpress-develop.git")
 
-    # CI "deploy" job commits the new image tag to deploy/code-server-values.yaml
-    var = codeshell.variables.find_or_initialize_by(key: "DEPLOY_TOKEN")
-    var.update!(value: ENV["GITLAB_DEMO_TOKEN"].to_s, masked: true, protected: false)
-    log "codeshell CI variable DEPLOY_TOKEN set"
+    # CI "deploy" jobs commit the new image tag to the project's deploy/ values
+    [codeshell, wordpress].each do |project|
+      var = project.variables.find_or_initialize_by(key: "DEPLOY_TOKEN")
+      var.update!(value: ENV["GITLAB_DEMO_TOKEN"].to_s, masked: true, protected: false)
+      log "#{project.full_path} CI variable DEPLOY_TOKEN set"
+    end
 
     log "demo bootstrap done"

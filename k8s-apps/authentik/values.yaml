@@ -31,6 +31,13 @@ oidcClients:
     redirectPath: /users/auth/openid_connect/callback
     secretEnv: GITLAB_CLIENT_SECRET
     icon: https://github.com/bartekmo/demo-mk8s/blob/main/k8s-apps/authentik/logos/gitlab.webp?raw=true
+  # OpenID Connect Generic plugin (built into the image, see k8s-apps/wordpress)
+  - name: wordpress
+    title: WordPress
+    host: blog
+    redirectPath: /wp-admin/admin-ajax.php?action=openid-connect-authorize
+    launchPath: /wp-admin/
+    secretEnv: WORDPRESS_CLIENT_SECRET
 
 # Domain-level forward auth for apps without native SSO (code-server, ...):
 # authentik's embedded outpost answers Traefik ForwardAuth requests; login
@@ -69,6 +76,9 @@ authentik:
       - name: GITLAB_CLIENT_SECRET
         valueFrom:
           secretKeyRef: { name: authentik-bootstrap, key: gitlab-client-secret }
+      - name: WORDPRESS_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef: { name: authentik-bootstrap, key: wordpress-client-secret }
 
   authentik:
     # real values come from the env above; the chart's secret must not set them

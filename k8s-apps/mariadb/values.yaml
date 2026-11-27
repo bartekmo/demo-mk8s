@@ -1,0 +1,29 @@
+# Single MariaDB server, reachable in-cluster at
+# mariadb.mariadb.svc.cluster.local:3306 (not exposed outside the cluster).
+#
+# Passwords come from Secret "mariadb-bootstrap", generated in-cluster by the
+# node bootstrap (never in Git / Terraform state). The same bootstrap copies
+# the application user's password into the app's namespace.
+image: mariadb:11.8 # LTS
+
+passwordSecret: mariadb-bootstrap
+
+# root password: key in passwordSecret
+rootPasswordKey: root-password
+
+# created by the image's entrypoint on the first start (empty data volume
+# only; later changes here are not applied to an existing database)
+database:
+  name: wordpress
+  user: wordpress
+  passwordKey: wordpress-password
+
+storage:
+  size: 10Gi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi

@@ -1,0 +1,51 @@
+# global.dnsRoot is injected by the Argo CD Application (k8s-bootstrap).
+# Public at https://blog.<dnsRoot>, no SSO in front.
+#
+# The image only exists once the demo user pushes to GitLab project
+# demo-apps/wordpress and its pipeline builds it. Until then the pod cannot
+# start (ImagePullBackOff) - intentionally, there is no fallback image.
+# The pipeline then commits deploy/values.yaml (image.tag) to that project,
+# which Argo CD layers on top of these values.
+image:
+  # empty: registry.<dnsRoot>/demo-apps/wordpress
+  repository: ""
+  tag: latest
+
+# MariaDB from the "mariadb" app; the password is copied into this namespace
+# by the node bootstrap (Secret wordpress-db, key password)
+db:
+  host: mariadb.mariadb.svc.cluster.local
+  name: wordpress
+  user: wordpress
+  passwordSecret: wordpress-db
+  passwordKey: password
+
+# Unattended install (no setup wizard): the "setup" container runs wp-cli
+# against the pod's WordPress on every start - installs the site once, runs
+# DB upgrades after new builds and activates the plugins. The admin account
+# "demo" has a random, discarded password: it logs in through authentik.
+site:
+  title: FortiCNAPP Demo Blog
+  admin: demo
+  cliImage: wordpress:cli-php8.3
+
+# Login via authentik (OpenID Connect Generic plugin, built into the image).
+# Configured with PHP constants, which take precedence over the plugin's
+# settings page. Only existing WordPress users can log in (linked by user
+# name); nobody is created on first login.
+oidc:
+  clientId: wordpress
+  clientSecret: wordpress-oidc # Secret (key client-secret), node bootstrap
+  # auto: wp-login.php redirects straight to authentik; button: adds a button
+  loginType: auto
+
+# media uploads (wp-content/uploads); the code itself always comes from the image
+storage:
+  size: 5Gi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi

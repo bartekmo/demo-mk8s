@@ -1,35 +1,35 @@
-# IDE (code-server): chart from the platform repo, plus an optional values
-# file from the GitLab project demo-apps/codeshell. That project's CI updates
-# deploy/code-server-values.yaml (image tag) after each build, so the IDE
-# follows the codeshell image without changes to the platform repo.
+# ${name}: chart from the platform repo, plus an optional values file from a
+# GitLab project (${overrides_repo_url}). That project's CI writes
+# ${values_file} (image tag) after each build, so the app follows its own
+# builds without changes to the platform repo.
 # Until GitLab and the project exist, this app shows a comparison error and
 # nothing is deployed; it syncs as soon as the repo is reachable.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: code-server
+  name: ${name}
   namespace: argocd
 spec:
   project: default
   sources:
     - repoURL: ${repo_url}
       targetRevision: ${repo_revision}
-      path: ${repo_path}/code-server
+      path: ${repo_path}/${name}
       helm:
-        releaseName: code-server
+        releaseName: ${name}
         valuesObject:
           global:
             dnsRoot: ${dns_root}
         valueFiles:
-          - $overrides/deploy/code-server-values.yaml
+          - $overrides/${values_file}
         ignoreMissingValueFiles: true
     # public project, read via GitLab's in-cluster address (no DNS/TLS needed)
     - repoURL: ${overrides_repo_url}
-      targetRevision: main
+      targetRevision: ${overrides_revision}
       ref: overrides
   destination:
     server: https://kubernetes.default.svc
-    namespace: code-server
+    namespace: ${name}
   syncPolicy:
     automated:
       prune: true

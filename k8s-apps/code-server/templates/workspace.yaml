@@ -1,0 +1,12 @@
+# files copied into freshly cloned repos (values: gitlab.repos[].prepare.files)
+{{- range .Values.gitlab.repos }}
+{{- with (.prepare).files }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: code-server-workspace-{{ . }}
+data:
+  {{- ($.Files.Glob (printf "workspace/%s/*" .)).AsConfig | nindent 2 }}
+{{- end }}
+{{- end }}

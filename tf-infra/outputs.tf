@@ -31,3 +31,8 @@ output "gitlab_url" {
   description = "GitLab (DNS: gitlab.<dns_root> and registry.<dns_root> -> lb_ip; SSH on lb_ip:22)"
   value       = "https://gitlab.${var.dns_root}"
 }
+
+output "blog_url" {
+  description = "WordPress (DNS: blog.<dns_root> -> lb_ip); runs once demo-apps/wordpress was pushed and built"
+  value       = "https://blog.${var.dns_root}"
+}
