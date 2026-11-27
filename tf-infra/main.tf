@@ -195,7 +195,7 @@ resource "google_compute_instance" "mk8s" {
   metadata = {
     # IAM-based SSH (roles/compute.osAdminLogin); gcloud compute ssh then
     # stops writing ssh-keys into metadata, which caused in-place drift
-    enable-oslogin = "TRUE"
+    enable-oslogin = "false"
 
     # Bootstrap script, re-run on every boot (idempotent). Kept in metadata
     # rather than metadata_startup_script: changes update in place and take
