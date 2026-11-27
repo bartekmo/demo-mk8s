@@ -150,6 +150,17 @@ ${argocd_appset}
 YAML
 
 # IDE: own Application (also reads its values from GitLab, see template)
+# Clusters bootstrapped before code-server was excluded from the ApplicationSet
+# still have a generated app of the same name, owned by the ApplicationSet. The
+# controller deletes it (non-cascading: pods/PVC stay) - wait for that, or it
+# would also delete the Application applied below.
+for i in $(seq 36); do
+  owner=$(kubectl -n argocd get app code-server \
+    -o jsonpath='{.metadata.ownerReferences[0].kind}' 2>/dev/null)
+  [ "$owner" = "ApplicationSet" ] || break
+  echo "waiting for the ApplicationSet to release the old code-server app..."
+  sleep 5
+done
 kubectl apply -f - <<'YAML'
 ${argocd_code_server_app}
 YAML
