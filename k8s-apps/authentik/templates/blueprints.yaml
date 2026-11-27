@@ -130,4 +130,9 @@ data:
         attrs:
           providers:
             - !KeyOf forward-auth-provider
+          # public URL used for browser redirects; the default ("") makes the
+          # outpost send users to localhost. Omitted keys keep their defaults.
+          config:
+            authentik_host: https://auth.{{ $dns }}
+            authentik_host_insecure: false
       {{- end }}
